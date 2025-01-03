@@ -1,0 +1,42 @@
+{
+  "name": "yq-data",
+  "version": "1.0.0",
+  "description": "Package to capture, record, and stream data from multiple devices to the web browser",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsup",
+    "test": "jest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mindhiveproject/yq-data.git"
+  },
+  "author": "MindHive",
+  "keywords": [
+    "bluetooth",
+    "serial",
+    "mediapipe",
+    "muse",
+    "EMOTIV"
+  ],
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mindhiveproject/yq-data/issues"
+  },
+  "homepage": "https://github.com/mindhiveproject/yq-data#readme",
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "muse-js": "^3.3.0",
+    "rxjs": "^7.8.1"
+  }
+}
