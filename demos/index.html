@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>yq-data demo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <h1>yq-data</h1>
+      <p class="lede">
+        Each panel connects a receiver and runs a pipeline over it. Start with
+        <strong>Recording</strong> — it needs no hardware.
+      </p>
+
+      <section class="panel">
+        <h2>Recording replay</h2>
+        <p>Load a zip produced by the Recorder (or the original platform).</p>
+        <div class="controls">
+          <input type="file" id="replay-file" accept=".zip" />
+          <button id="replay-play" disabled>Play</button>
+          <button id="replay-pause" disabled>Pause</button>
+          <label><input type="checkbox" id="replay-loop" /> Loop</label>
+        </div>
+        <progress id="replay-progress" value="0" max="1"></progress>
+        <pre class="output" id="replay-output"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Muse</h2>
+        <p>Raw EEG &rarr; windowing &rarr; band power, and PPG &rarr; heart rate.</p>
+        <div class="controls">
+          <button id="muse-connect">Connect Muse</button>
+          <button id="muse-disconnect" disabled>Disconnect</button>
+          <button id="muse-record" disabled>Start recording</button>
+          <button id="muse-save" disabled>Save recording</button>
+        </div>
+        <pre class="output" id="muse-output"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>EMOTIV</h2>
+        <p>Requires the Cortex service running locally and credentials in <code>.env</code>.</p>
+        <div class="controls">
+          <button id="emotiv-connect">Connect EMOTIV</button>
+        </div>
+        <pre class="output" id="emotiv-output"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Camera</h2>
+        <p>One camera feeding face expressions and rPPG heart rate at once.</p>
+        <div class="controls">
+          <button id="camera-connect">Connect camera</button>
+          <button id="camera-disconnect" disabled>Disconnect</button>
+        </div>
+        <video id="camera-video" autoplay muted playsinline width="320"></video>
+        <pre class="output" id="camera-output"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Microphone</h2>
+        <p>Raw audio &rarr; windowing &rarr; RMS in dBFS.</p>
+        <div class="controls">
+          <button id="mic-connect">Connect microphone</button>
+          <button id="mic-disconnect" disabled>Disconnect</button>
+        </div>
+        <pre class="output" id="mic-output"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Lab Streaming Layer</h2>
+        <div class="controls">
+          <input id="lsl-url" value="ws://localhost:8080" size="30" />
+          <button id="lsl-connect">Connect relay</button>
+        </div>
+        <pre class="output" id="lsl-output"></pre>
+      </section>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

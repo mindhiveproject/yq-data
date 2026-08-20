@@ -1,0 +1,212 @@
+import {
+  DataPacket,
+  StreamMetadata,
+  AnalysisMethod,
+  ProcessingStage,
+  Modality,
+  StreamIdentifierLiteral,
+  ChannelInfo,
+  TypedArray,
+} from "../data_stream.interface";
+import { stringToStreamID, streamIDToString } from "../utility";
+
+/** Overrides an analyzer may apply to the packet it emits. */
+export interface EmitOptions {
+  /** Modality of the output, when it differs from the input. */
+  modality?: Modality;
+  /** Name segment of the output stream ID. Defaults to the analysis method. */
+  name?: string;
+  /** Channel labels of the output, when the analyzer changes them. */
+  channelInfo?: ChannelInfo[];
+  /** Output rate in Hz, when the analyzer resamples. */
+  samplingRate?: number;
+  /** Explicit channel count, when there is no channel info to infer it from. */
+  channelCount?: number;
+  /** Metadata merged into `additionalMetadata` on the output. */
+  additionalMetadata?: Record<string, any>;
+  /** Overrides the packet timestamp. Defaults to the input's. */
+  timestamp?: number;
+}
+
+/**
+ * Shared machinery for every node that transforms packets: identity, output
+ * stream derivation, and processing-history bookkeeping.
+ *
+ * Concrete nodes extend either {@link BaseAnalyzer} (one input) or
+ * {@link MultiInputAnalyzer} (several named inputs).
+ */
+export abstract class AbstractAnalyzer {
+  abstract readonly name: string;
+  abstract readonly method: AnalysisMethod;
+  abstract readonly stage: ProcessingStage;
+
+  /** Parameters for analysis, initialized via constructor */
+  protected readonly parameters: Record<string, any>;
+
+  constructor(parameters: Record<string, any> = {}) {
+    this.parameters = parameters;
+  }
+
+  /**
+   * Clears any internal state (buffers, running statistics).
+   *
+   * Called by the pipeline when a stream disconnects, so a reconnect does not
+   * inherit samples from the previous session.
+   */
+  public reset(): void {}
+
+  protected createMetadata(
+    meta: StreamMetadata,
+    additionalMetadata: Record<string, any> = {}
+  ): StreamMetadata {
+    return {
+      ...meta,
+      processingHistory: [
+        ...(meta.processingHistory || []),
+        {
+          stage: this.stage,
+          method: this.method,
+          parameters: this.parameters, // Include analysis parameters
+          moduleName: this.name,
+          receivedTime: Date.now(),
+        },
+      ],
+      additionalMetadata: {
+        ...meta.additionalMetadata,
+        ...additionalMetadata,
+      },
+    };
+  }
+
+  /** Helper method to build a StreamIdentifierLiteral */
+  protected buildStreamID(
+    deviceID: string | number,
+    modality: Modality,
+    processingStage: ProcessingStage,
+    name?: string
+  ): StreamIdentifierLiteral {
+    return streamIDToString({ deviceID, modality, processingStage, name });
+  }
+
+  /**
+   * Builds the output packet for a transformation.
+   *
+   * The output stream ID keeps the input's device but takes this analyzer's
+   * processing stage and (by default) its method as the name — so a Muse EEG
+   * stream through band power becomes `muse-1:eeg:features:band_power`, which
+   * is exactly what a binding elsewhere can address.
+   */
+  protected emit<Out extends TypedArray>(
+    input: DataPacket<any>,
+    data: Out,
+    options: EmitOptions = {}
+  ): DataPacket<Out> {
+    const source = stringToStreamID(input.streamID as StreamIdentifierLiteral);
+    const modality = options.modality ?? source.modality;
+    const name = options.name ?? this.method;
+
+    const streamID = this.buildStreamID(
+      source.deviceID,
+      modality,
+      this.stage,
+      name
+    );
+
+    const channelInfo = options.channelInfo ?? input.metadata.channelInfo;
+    const channelCount =
+      options.channelCount ??
+      options.channelInfo?.length ??
+      input.metadata.channelCount ??
+      channelInfo?.length ??
+      1;
+
+    const metadata: StreamMetadata = {
+      ...this.createMetadata(input.metadata, options.additionalMetadata),
+      streamID,
+      modality,
+      name,
+      channelCount,
+      ...(channelInfo ? { channelInfo } : {}),
+      ...(options.samplingRate !== undefined
+        ? { samplingRate: options.samplingRate }
+        : {}),
+    };
+
+    const packet: DataPacket<Out> = {
+      streamID,
+      timestamp: options.timestamp ?? input.timestamp,
+      data,
+      metadata,
+    };
+
+    if (input.deviceTime !== undefined) packet.deviceTime = input.deviceTime;
+
+    return packet;
+  }
+}
+
+/**
+ * A single-input, single-output processing node.
+ *
+ * `analyze` returns `null` when the node has consumed the packet but has
+ * nothing to emit yet — the normal case for buffering nodes such as
+ * windowing, which only produce output once a full window has accumulated.
+ */
+export abstract class BaseAnalyzer<
+  In extends TypedArray = Float32Array,
+  Out extends TypedArray = Float32Array
+> extends AbstractAnalyzer {
+  /** Whether this analyzer can consume a stream with the given metadata. */
+  abstract compatible(meta: StreamMetadata): boolean;
+
+  abstract analyze(packet: DataPacket<In>): DataPacket<Out> | null;
+}
+
+/** How a multi-input node pairs packets arriving on different ports. */
+export type SyncPolicy =
+  /** Emit on every packet, pairing it with the last seen value of each other port. */
+  | "latest"
+  /** Emit only when every port has a packet within `tolerance` ms of each other. */
+  | "timestamp";
+
+/**
+ * A node that combines several named input streams — synchrony between two
+ * headsets, connectivity across devices, or any comparison of two signals.
+ *
+ * The pipeline routes an edge's target port to one of {@link ports}.
+ */
+export abstract class MultiInputAnalyzer<
+  In extends TypedArray = Float32Array,
+  Out extends TypedArray = Float32Array
+> extends AbstractAnalyzer {
+  /** Named input ports, in declaration order. */
+  abstract readonly ports: string[];
+
+  /** How packets on different ports are paired. */
+  public syncPolicy: SyncPolicy = "latest";
+
+  /** Maximum timestamp difference, in ms, for the "timestamp" policy. */
+  public tolerance: number = 100;
+
+  /** Port whose stream identity and metadata seed the output packet. */
+  public get primaryPort(): string {
+    return this.ports[0];
+  }
+
+  /** Whether this analyzer can consume the given set of input streams. */
+  abstract compatible(metas: Record<string, StreamMetadata>): boolean;
+
+  abstract analyze(
+    packets: Record<string, DataPacket<In>>
+  ): DataPacket<Out> | null;
+}
+
+/** Any node the pipeline can evaluate. */
+export type AnyAnalyzer = BaseAnalyzer<any, any> | MultiInputAnalyzer<any, any>;
+
+/** Narrowing helper used by the pipeline evaluator. */
+export function isMultiInput(
+  analyzer: AnyAnalyzer
+): analyzer is MultiInputAnalyzer<any, any> {
+  return analyzer instanceof MultiInputAnalyzer;
+}

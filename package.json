@@ -2,10 +2,13 @@
   "name": "yq-data",
   "version": "1.0.0",
   "description": "Package to capture, record, and stream data from multiple devices to the web browser",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsup",
-    "test": "jest"
+    "test": "jest --config jest.config.ts",
+    "test:e2e": "jest --config jest.e2e.config.ts"
   },
   "repository": {
     "type": "git",
@@ -25,8 +28,14 @@
   },
   "homepage": "https://github.com/mindhiveproject/yq-data#readme",
   "devDependencies": {
+    "@mediapipe/tasks-vision": "^0.10.3",
     "@types/jest": "^29.5.14",
+    "@types/papaparse": "^5.3.15",
     "jest": "^29.7.0",
+    "jest-dev-server": "^11.0.0",
+    "jszip": "^3.10.1",
+    "papaparse": "^5.4.1",
+    "puppeteer": "^23.11.1",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
     "tsup": "^8.3.5",
@@ -36,7 +45,24 @@
     "dist"
   ],
   "dependencies": {
+    "mathjs": "^14.0.0",
     "muse-js": "^3.3.0",
     "rxjs": "^7.8.1"
+  },
+  "peerDependencies": {
+    "@mediapipe/tasks-vision": "^0.10.3",
+    "jszip": "^3.10.1",
+    "papaparse": "^5.4.1"
+  },
+  "peerDependenciesMeta": {
+    "@mediapipe/tasks-vision": {
+      "optional": true
+    },
+    "jszip": {
+      "optional": true
+    },
+    "papaparse": {
+      "optional": true
+    }
   }
 }
