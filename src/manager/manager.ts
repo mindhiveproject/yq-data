@@ -428,9 +428,7 @@ export class Pipeline {
     analyzer: MultiInputAnalyzer<any, any>,
     pending: Map<string, PortState>,
     trigger: DataPacket
-  ): Record<string, DataPacket | undefined> | null {
-    if (analyzer.syncPolicy === "event") return this.gatherEvent(analyzer, pending);
-
+  ): Record<string, DataPacket> | null {
     const gathered: Record<string, DataPacket> = {};
 
     for (const port of analyzer.ports) {
@@ -455,35 +453,6 @@ export class Pipeline {
       const timestamps = analyzer.ports.map((p) => gathered[p].timestamp);
       const spread = Math.max(...timestamps) - Math.min(...timestamps);
       if (spread > analyzer.tolerance) return null;
-    }
-
-    return gathered;
-  }
-
-  /**
-   * Hands over what has arrived since the last call, and consumes it.
-   *
-   * No pairing and no staleness. Every port is cleared after delivery, so a
-   * packet is seen exactly once, on the tick it arrives — which makes the
-   * record simply "what is new", and any port that produced nothing absent.
-   *
-   * Exactly-once is what a node accumulating state needs. Re-delivering the
-   * most recent packet on each tick, as the pairing policies do, would have a
-   * buffering node count the same samples again every time any other port
-   * moved. A node that wants the latest value held keeps it itself, which is
-   * one field and unambiguous.
-   */
-  private gatherEvent(
-    analyzer: MultiInputAnalyzer<any, any>,
-    pending: Map<string, PortState>
-  ): Record<string, DataPacket | undefined> {
-    const gathered: Record<string, DataPacket | undefined> = {};
-
-    for (const port of analyzer.ports) {
-      const state = pending.get(port);
-      if (!state || state.packets.length === 0) continue;
-      gathered[port] = state.packets[state.packets.length - 1];
-      state.packets = [];
     }
 
     return gathered;

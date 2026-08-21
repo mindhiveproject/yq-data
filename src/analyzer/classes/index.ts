@@ -11,8 +11,6 @@ export * from "./preprocessing/filtering";
 export * from "./preprocessing/normalization";
 export * from "./preprocessing/channel_selection";
 
-export * from "./segmentation/epoching";
-
 export * from "./transform/spectrum";
 
 export * from "./features/band_power";

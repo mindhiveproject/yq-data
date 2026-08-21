@@ -12,7 +12,6 @@ import {
   RMSAnalyzer,
 } from "./classes/features/statistics";
 import { HeartRate } from "./classes/features/heart_rate";
-import { Epoching } from "./classes/segmentation/epoching";
 import { Correlation } from "./classes/multi/correlation";
 import { Difference } from "./classes/multi/difference";
 
@@ -87,6 +86,5 @@ registerAnalyzer(
 );
 registerAnalyzer(AnalysisMethod.RMS, (p) => new RMSAnalyzer(p));
 registerAnalyzer(AnalysisMethod.HEART_RATE, (p) => new HeartRate(p));
-registerAnalyzer(AnalysisMethod.EPOCHING, (p) => new Epoching(p));
 registerAnalyzer(AnalysisMethod.CONNECTIVITY, (p) => new Correlation(p));
 registerAnalyzer("difference", (p) => new Difference(p));
