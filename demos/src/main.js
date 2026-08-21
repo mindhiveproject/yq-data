@@ -2,6 +2,7 @@ import "./style.css";
 import {
   AnalysisMethod,
   EMOTIVReceiver,
+  FaceEmotionReceiver,
   FaceLandmarkReceiver,
   FileReplayReceiver,
   LSLReceiver,
@@ -12,6 +13,7 @@ import {
   RPPGReceiver,
   Recorder,
   VideoReceiver,
+  VoiceEmotionReceiver,
 } from "yq-data";
 
 /* -------------------------------------------------------------------------- */
@@ -217,6 +219,7 @@ document.getElementById("emotiv-connect").addEventListener("click", async () => 
 
 let camera;
 let face;
+let faceEmotion;
 let rppg;
 const renderCamera = makeRenderer("camera-output", 5);
 
@@ -261,6 +264,13 @@ document.getElementById("camera-connect").addEventListener("click", async () => 
     face.startStream();
     face.data.subscribe(renderCamera);
 
+    // A detector plus two classifier passes is heavier than the MediaPipe
+    // graph above, so it gets a slower frame budget on the same feed.
+    faceEmotion = new FaceEmotionReceiver(video, { maxFps: 10 });
+    await faceEmotion.connect();
+    faceEmotion.startStream();
+    faceEmotion.data.subscribe(renderCamera);
+
     rppg = new RPPGReceiver(video, { maxFps: 30, region: "forehead" });
     await rppg.connect();
     rppg.startStream();
@@ -279,6 +289,7 @@ document.getElementById("camera-connect").addEventListener("click", async () => 
 document.getElementById("camera-disconnect").addEventListener("click", async () => {
   rppgPipeline.stop();
   await face?.disconnect();
+  await faceEmotion?.disconnect();
   await rppg?.disconnect();
   await camera?.disconnect();
   toggle("camera-connect", false);
@@ -336,6 +347,45 @@ document.getElementById("mic-disconnect").addEventListener("click", async () => 
   toggle("mic-connect", false);
   toggle("mic-disconnect", true);
 });
+
+/* -------------------------------------------------------------------------- */
+/* Voice emotion                                                              */
+/* -------------------------------------------------------------------------- */
+
+let voice;
+
+// Rendered at full rate rather than throttled: this receiver emits once per
+// spoken phrase, so there is nothing to throttle.
+const renderVoice = makeRenderer("voice-output", Infinity);
+
+document.getElementById("voice-connect").addEventListener("click", async () => {
+  try {
+    voice = new VoiceEmotionReceiver({
+      emitAffect: true,
+      // The package default fetches this model from jsDelivr. The demo
+      // serves the repository's own copy instead (public/models is a symlink
+      // to ../models), so it also works offline and against local edits.
+      modelPath: "/models/voice-emotion",
+    });
+    await voice.connect();
+    await voice.startStream();
+    voice.data.subscribe(renderVoice);
+
+    document.getElementById("voice-output").textContent = "Listening…";
+    toggle("voice-connect", true);
+    toggle("voice-disconnect", false);
+  } catch (error) {
+    fail("voice-output", error);
+  }
+});
+
+document
+  .getElementById("voice-disconnect")
+  .addEventListener("click", async () => {
+    await voice?.disconnect();
+    toggle("voice-connect", false);
+    toggle("voice-disconnect", true);
+  });
 
 /* -------------------------------------------------------------------------- */
 /* LSL                                                                        */

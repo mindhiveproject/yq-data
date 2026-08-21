@@ -134,6 +134,14 @@ const FALLBACK_COLUMNS: Partial<Record<DataStreams, string[]>> = {
 /**
  * EMOTIV headset receiver implementation that connects to the Cortex API
  * and processes data streams from EMOTIV devices.
+ *
+ * Cortex is EMOTIV's proprietary WebSocket API, served by the EMOTIV Launcher
+ * application. Unlike every other receiver here, the headset is not reachable
+ * from the browser directly: the user must install and run EMOTIV's software
+ * locally, hold a developer client ID and secret, and accept the service's
+ * self-signed certificate at `wss://localhost:6868` once.
+ *
+ * @see https://emotiv.gitbook.io/cortex-api
  */
 export class EMOTIVReceiver extends BaseReceiver {
   deviceName: string = "EMOTIV";

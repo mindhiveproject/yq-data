@@ -5,10 +5,10 @@ import {
   ProcessingStage,
   StreamMetadata,
 } from "../../../data_stream.interface";
-import { MultiInputAnalyzer } from "../../base_analyzer";
+import { MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 
-export interface DifferenceParameters {
+export interface DifferenceParameters extends SyncParameters {
   /**
    * `similarity` returns `1 - |a - b|`, which is the face-synchrony measure:
    * two people pulling the same expression score near 1, opposite expressions
@@ -35,7 +35,6 @@ export class Difference extends MultiInputAnalyzer {
 
   constructor(parameters: DifferenceParameters = {}) {
     super({ mode: "similarity", summaryOnly: false, ...parameters });
-    this.syncPolicy = "latest";
   }
 
   compatible(metas: Record<string, StreamMetadata>): boolean {

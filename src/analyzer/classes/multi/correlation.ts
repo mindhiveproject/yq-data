@@ -5,15 +5,15 @@ import {
   ProcessingStage,
   StreamMetadata,
 } from "../../../data_stream.interface";
-import { MultiInputAnalyzer } from "../../base_analyzer";
+import { MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
 import { getChannelCount, deinterleave } from "../../../utility";
 import { correlation } from "../../methods/stats";
 
-export interface CorrelationParameters {
+export interface CorrelationParameters extends SyncParameters {
   /**
    * `paired` correlates channel *i* of A with channel *i* of B — two people
    * wearing the same headset model. `matrix` correlates every channel of A
-   * with every channel of B, which is the connectivity case.
+   * with every channel of B.
    */
   mode?: "paired" | "matrix" | "mean";
   /** Report |r| rather than signed r. */
@@ -21,11 +21,20 @@ export interface CorrelationParameters {
 }
 
 /**
- * Correlation between two streams — inter-brain synchrony across two headsets,
- * or connectivity between channels.
+ * Correlation between two streams.
  *
  * Both inputs must be windowed, and the correlation is computed over the
  * shorter of the two windows.
+ *
+ * Pairing is left on the default `latest` policy. The stricter `timestamp`
+ * and `nearest` policies are available, but note what they can and cannot buy
+ * here: a packet carries one timestamp for a whole window, so matching two
+ * windows to the millisecond still leaves their samples on separate time
+ * grids whenever the streams run at different rates, and this node zips them
+ * index to index regardless. Gating harder mainly costs output rate. Genuine
+ * alignment needs resampling one stream onto the other's grid upstream, or a
+ * lagged cross-correlation that measures the offset instead of assuming it
+ * away.
  */
 export class Correlation extends MultiInputAnalyzer {
   readonly name = "Correlation";
@@ -35,9 +44,6 @@ export class Correlation extends MultiInputAnalyzer {
 
   constructor(parameters: CorrelationParameters = {}) {
     super({ mode: "paired", absolute: false, ...parameters });
-    // Two independent devices never share a clock, so pair on arrival order
-    // rather than demanding timestamps line up.
-    this.syncPolicy = "latest";
   }
 
   compatible(metas: Record<string, StreamMetadata>): boolean {

@@ -23,3 +23,12 @@ export * from "./devices/vision/base_vision";
 export * from "./devices/vision/face_landmarker";
 export * from "./devices/vision/pose";
 export * from "./devices/vision/rppg";
+
+// Facial emotion recognition. Requires the optional @vladmandic/face-api peer
+// dependency, which is loaded lazily on connect.
+export * from "./devices/vision/face_emotion";
+
+// Speech emotion recognition. Requires the optional formantanalyzer peer
+// dependency, which is loaded lazily on connect.
+export * from "./devices/voice/voice_emotion";
+export * from "./devices/voice/ml5_model";

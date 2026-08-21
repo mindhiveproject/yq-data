@@ -13,7 +13,12 @@ export {
   MultiInputAnalyzer,
   isMultiInput,
 } from "./base_analyzer";
-export type { AnyAnalyzer, SyncPolicy, EmitOptions } from "./base_analyzer";
+export type {
+  AnyAnalyzer,
+  SyncPolicy,
+  SyncParameters,
+  EmitOptions,
+} from "./base_analyzer";
 
 export * from "./methods";
 export * from "./classes";

@@ -52,6 +52,11 @@ export interface HeartRateParameters {
  * Expects a windowed input long enough to contain several beats; ten seconds
  * is the reference configuration and anything under about four will report
  * unstable rates.
+ *
+ * The `peaks` strategy detects beats with the adaptive-threshold method of
+ * Shin, H.S., Lee, C. & Lee, M. (2009), Adaptive threshold method for the peak
+ * detection of photoplethysmographic waveform, Computers in Biology and
+ * Medicine, 39(12), 1145–1152, https://doi.org/10.1016/j.compbiomed.2009.10.006
  */
 export class HeartRate extends BaseAnalyzer {
   readonly name = "HeartRate";

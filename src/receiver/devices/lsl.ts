@@ -79,10 +79,16 @@ interface RegisteredStream {
  *
  * LSL itself is a native protocol with no browser binding, so this expects a
  * relay that forwards streams as JSON of the form
- * `{ "<streamKey>": { info: {...}, timeseries: [...], timestamp: n } }` —
- * the shape the reference You-Quantified bridge produces. The first message
- * for a stream carries its `info` and registers it; later messages carry
- * samples.
+ * `{ "<streamKey>": { info: {...}, timeseries: [...], timestamp: n } }`.
+ * The first message for a stream carries its `info` and registers it; later
+ * messages carry samples.
+ *
+ * That shape is what LSLWebsocketMirror produces — a Python script the user
+ * runs on the machine the LSL streams are on. Any relay emitting the same
+ * JSON works; there is no other requirement.
+ *
+ * @see https://github.com/esromerog/LSLWebsocketMirror
+ * @see https://labstreaminglayer.readthedocs.io
  *
  * One relay commonly carries several devices, so each LSL stream becomes its
  * own yq-data stream, identified by that stream's `source_id`.

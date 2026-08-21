@@ -65,6 +65,9 @@ export interface PoseOptions extends VisionAssetOptions {
  *
  * Emits one stream of 33 landmarks flattened to x, y, z (and optionally
  * visibility) per landmark, with channels labelled "left wrist x" and so on.
+ *
+ * Lugaresi, C. et al. (2019). MediaPipe: A Framework for Building Perception
+ * Pipelines. arXiv:1906.08172. https://arxiv.org/abs/1906.08172
  */
 export class PoseReceiver extends VisionReceiver {
   deviceName = "Pose Detection";

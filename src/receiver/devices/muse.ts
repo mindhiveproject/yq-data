@@ -43,6 +43,12 @@ function toChannelInfo(labels: string[], unit?: string): ChannelInfo[] {
 /**
  * Muse headband receiver, over Web Bluetooth.
  *
+ * The Bluetooth GATT protocol is spoken by muse-js, which handles connection,
+ * subscription and decoding of the headband's packed 12-bit samples. Web
+ * Bluetooth limits this to Chrome-based browsers.
+ *
+ * @see https://github.com/urish/muse-js
+ *
  * Emits raw EEG at 256 Hz and, when enabled, raw PPG at 64 Hz. Derived
  * quantities — band power, heart rate — are deliberately not computed here;
  * build a {@link Pipeline} over these raw streams instead, so the same

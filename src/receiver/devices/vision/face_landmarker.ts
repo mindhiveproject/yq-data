@@ -27,6 +27,9 @@ export interface FaceLandmarkOptions extends VisionAssetOptions {
  * - `landmarks` — 478 points as x, y, z triples. Off by default: 1434
  *   channels at frame rate is a lot of data for something most visuals never
  *   read.
+ *
+ * Lugaresi, C. et al. (2019). MediaPipe: A Framework for Building Perception
+ * Pipelines. arXiv:1906.08172. https://arxiv.org/abs/1906.08172
  */
 export class FaceLandmarkReceiver extends VisionReceiver {
   deviceName = "Face Landmarker";

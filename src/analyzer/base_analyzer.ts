@@ -164,10 +164,52 @@ export abstract class BaseAnalyzer<
 
 /** How a multi-input node pairs packets arriving on different ports. */
 export type SyncPolicy =
-  /** Emit on every packet, pairing it with the last seen value of each other port. */
+  /**
+   * Pair each arriving packet with the most recent packet held on every other
+   * port, and emit on every arrival.
+   *
+   * The default, because the intended inputs are feature streams — band-power
+   * envelopes, blendshape scores — carried in windows of a second or more,
+   * where a few hundred milliseconds of skew moves the result far less than
+   * dropping half the pairings would.
+   */
   | "latest"
-  /** Emit only when every port has a packet within `tolerance` ms of each other. */
-  | "timestamp";
+  /**
+   * As `latest`, but emit only when the paired packets were stamped within
+   * `tolerance` ms of each other.
+   *
+   * This gates on alignment; it does not create it. Two windows stamped 5 ms
+   * apart still hold samples on different time grids if their streams run at
+   * different rates, and the analyzer will still zip them index to index.
+   */
+  | "timestamp"
+  /**
+   * Keep a short history per port, pair against the packet *closest* in time
+   * to the arriving one, then apply the `tolerance` gate.
+   *
+   * Differs from `timestamp` only where arrival order and timestamp order
+   * disagree, which happens when two transports buffer by different amounts —
+   * a BLE headset alongside a webcam is the usual pairing. It never waits for
+   * a better match to show up, since that would add latency to a live signal.
+   */
+  | "nearest";
+
+/**
+ * Synchronisation settings every multi-input node accepts.
+ *
+ * Node parameters travel as JSON, so these are read from the same parameter
+ * object as the analyzer's own settings rather than being set in code.
+ */
+export interface SyncParameters {
+  /** How packets on different ports are paired. Defaults to `latest`. */
+  syncPolicy?: SyncPolicy;
+  /** Maximum timestamp spread, in ms, for `timestamp` and `nearest`. */
+  tolerance?: number;
+  /** How long a packet stays eligible for pairing. See {@link MultiInputAnalyzer.maxAge}. */
+  maxAge?: number | "auto";
+  /** Packets retained per port under `nearest`. */
+  historyDepth?: number;
+}
 
 /**
  * A node that combines several named input streams — synchrony between two
@@ -185,8 +227,42 @@ export abstract class MultiInputAnalyzer<
   /** How packets on different ports are paired. */
   public syncPolicy: SyncPolicy = "latest";
 
-  /** Maximum timestamp difference, in ms, for the "timestamp" policy. */
+  /** Maximum timestamp spread, in ms, for the `timestamp` and `nearest` policies. */
   public tolerance: number = 100;
+
+  /**
+   * How long a packet stays eligible for pairing, in ms.
+   *
+   * Applies under every policy, because without it a departed stream is
+   * invisible: the pipeline would go on pairing live packets with the last
+   * window a disconnected device sent, and a bound visual would look alive
+   * while one of its inputs was gone.
+   *
+   * `"auto"` derives the limit from each port's own observed cadence, which is
+   * the only setting that suits both a 60 Hz face stream and a windowing node
+   * emitting once every four seconds.
+   */
+  public maxAge: number | "auto" = "auto";
+
+  /** Packets retained per port under the `nearest` policy. */
+  public historyDepth: number = 8;
+
+  /**
+   * Subclasses merge their own defaults into `parameters` and pass the result
+   * through, so a policy chosen in a stored JSON graph arrives here alongside
+   * the analyzer's own settings.
+   */
+  constructor(parameters: Record<string, any> = {}) {
+    super(parameters);
+
+    const { syncPolicy, tolerance, maxAge, historyDepth } =
+      parameters as SyncParameters;
+
+    if (syncPolicy !== undefined) this.syncPolicy = syncPolicy;
+    if (tolerance !== undefined) this.tolerance = tolerance;
+    if (maxAge !== undefined) this.maxAge = maxAge;
+    if (historyDepth !== undefined) this.historyDepth = historyDepth;
+  }
 
   /** Port whose stream identity and metadata seed the output packet. */
   public get primaryPort(): string {

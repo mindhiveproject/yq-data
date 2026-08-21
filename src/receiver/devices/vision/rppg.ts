@@ -48,6 +48,21 @@ export interface RPPGOptions extends VisionAssetOptions {
  *
  * Accuracy depends heavily on even lighting and a still subject; treat the
  * output as expressive rather than clinical.
+ *
+ * The pipeline this belongs to — facial ROI, spatial mean per colour channel,
+ * detrend, bandpass, then rate estimation — follows heartbeat-js, whose
+ * approach is described in Rouast et al. (2016). The downstream stages are
+ * this package's own: see {@link HeartRate} for what actually estimates the
+ * rate.
+ *
+ * Rouast, P.V., Adam, M.T.P., Cornforth, D.J., Lux, E. & Weinhardt, C. (2016).
+ * Using Contactless Heart Rate Measurements for Real-Time Assessment of
+ * Affective States. In Information Systems and Neuroscience, LNISO 10,
+ * 157–163. https://doi.org/10.1007/978-3-319-41402-7_20
+ * @see https://github.com/prouast/heartbeat-js
+ *
+ * The face is located with MediaPipe Face Landmarker — Lugaresi, C. et al.
+ * (2019), arXiv:1906.08172.
  */
 export class RPPGReceiver extends VisionReceiver {
   deviceName = "Video Heart Rate";

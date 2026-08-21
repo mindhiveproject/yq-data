@@ -15,11 +15,7 @@ import { WindowType } from "../../methods/window";
 export type BandDefinitions = Record<string, [number, number]>;
 
 /**
- * The canonical EEG bands used by the reference implementation.
- *
- * Beta is split into low and high because they behave differently — low beta
- * tracks alert focus while high beta rises with tension — and collapsing them
- * loses the distinction that makes beta interesting to visualize.
+ * EEG Band Power range definitions with beta as a more granular metric
  */
 export const DEFAULT_EEG_BANDS: BandDefinitions = {
   Delta: [1, 4],
@@ -75,8 +71,6 @@ export class BandPower extends BaseAnalyzer {
   }
 
   compatible(meta: StreamMetadata): boolean {
-    // Any sampled signal has band power; the bands themselves just happen to
-    // be named for EEG rhythms by default.
     return meta.samplingRate !== undefined && meta.samplingRate > 0;
   }
 

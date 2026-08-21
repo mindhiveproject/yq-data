@@ -1,11 +1,15 @@
 /**
  * Peak detection and rate estimation.
  *
- * The adaptive-threshold detector follows the same decaying-threshold family
- * as the reference PPG implementation, but the rate estimate is derived from
- * the median inter-beat interval with physiological bounds rather than a plain
- * mean over all intervals — a single missed or doubled beat shifts a mean
- * enough to make the output visibly jump, and a median absorbs it.
+ * The adaptive-threshold detector follows the decaying-threshold method of
+ * Shin, Lee & Lee (2009), but the rate estimate is derived from the median
+ * inter-beat interval with physiological bounds rather than a plain mean over
+ * all intervals — a single missed or doubled beat shifts a mean enough to make
+ * the output visibly jump, and a median absorbs it.
+ *
+ * Shin, H.S., Lee, C. & Lee, M. (2009). Adaptive threshold method for the peak
+ * detection of photoplethysmographic waveform. Computers in Biology and
+ * Medicine, 39(12), 1145–1152. https://doi.org/10.1016/j.compbiomed.2009.10.006
  */
 import { mean, maximum, standardDeviation } from "./stats";
 
@@ -26,13 +30,18 @@ export interface PeakOptions {
 }
 
 /**
- * Adaptive-threshold peak detection.
+ * Adaptive-threshold peak detection, after Shin, Lee & Lee (2009).
  *
  * The threshold starts near the signal maximum and decays; a sample crossing
  * it opens a candidate, and the local maximum before the signal falls back
  * under the threshold is recorded. Because the threshold tracks the signal,
  * this handles the slow amplitude drift typical of optical pulse signals far
  * better than a fixed cutoff.
+ *
+ * The decay rate is the paper's: proportional to the previous peak's amplitude
+ * plus the signal's standard deviation, scaled by the sampling rate.
+ *
+ * @see https://doi.org/10.1016/j.compbiomed.2009.10.006
  */
 export function adaptiveThresholdPeaks(
   signal: ArrayLike<number>,

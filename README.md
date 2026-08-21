@@ -56,12 +56,14 @@ A receiver owns a connection to one source and publishes packets.
 |---|---|---|
 | `MuseReceiver` | Muse headband | Web Bluetooth. Raw EEG at 256 Hz, PPG at 64 Hz |
 | `EMOTIVReceiver` | EMOTIV headsets | Cortex API over WebSocket; needs credentials |
-| `LSLReceiver` | Lab Streaming Layer | Via a WebSocket relay; auto-reconnects |
+| `LSLReceiver` | Lab Streaming Layer | Via a [WebSocket relay](#lab-streaming-layer); auto-reconnects |
 | `MicrophoneReceiver` | Microphone | AudioWorklet; raw interleaved PCM |
 | `VideoReceiver` | Camera | Lifecycle handle only — emits no packets |
 | `FaceLandmarkReceiver` | Camera | 52 expression scores, head pose, landmarks |
+| `FaceEmotionReceiver` | Camera | 7 facial expression probabilities |
 | `PoseReceiver` | Camera | 33 body landmarks |
 | `RPPGReceiver` | Camera | Pulse-bearing RGB signal from facial skin |
+| `VoiceEmotionReceiver` | Microphone | 4 speech emotion probabilities, per phrase |
 | `FileReplayReceiver` | A recording | No hardware, no permissions, no network |
 
 ```ts
@@ -90,12 +92,72 @@ await camera.connect();
 await camera.startStream();
 
 const face = new FaceLandmarkReceiver(videoElement);
+const emotion = new FaceEmotionReceiver(videoElement);
 const pulse = new RPPGReceiver(videoElement);
 ```
 
 The element must stay mounted while streaming. In a React app, mount it once
 outside the panel tree and portal previews into it — unmounting it when a tab
 changes kills the camera and every derived stream.
+
+### Emotion
+
+Two receivers infer emotion, and they answer different questions.
+
+`FaceEmotionReceiver` runs face-api's expression network over the camera and
+emits seven probabilities summing to 1 — `neutral`, `happy`, `sad`, `angry`,
+`fearful`, `disgusted`, `surprised` — at the configured frame rate. It defaults
+to the 190 KB `tiny` face detector; pass `detector: "ssd"` for the slower,
+more accurate SSD-MobileNet.
+
+```ts
+const emotion = new FaceEmotionReceiver(videoElement, { maxFps: 10 });
+await emotion.connect();
+emotion.startStream();
+```
+
+`VoiceEmotionReceiver` listens to the microphone, segments speech into
+syllables, and scores each phrase as `N` neutral, `A` angry, `S` sad or `H`
+happy. It opens its own microphone, so it runs independently of
+`MicrophoneReceiver` and both can be connected at once.
+
+```ts
+const voice = new VoiceEmotionReceiver({ emitAffect: true });
+await voice.connect();
+await voice.startStream();
+```
+
+**It emits per phrase, not per interval.** Nothing arrives while nobody is
+speaking, and its streams therefore carry no `samplingRate`. Bind it to
+something that tolerates gaps.
+
+`emitAffect` adds a second stream carrying `valence` and `arousal`, computed
+from a time-smoothed distribution with the formula the old You-Quantified
+popup used — `valence = 3 × H`, `arousal = 1 − N`. It exists so visuals built
+against that device keep working; valence is deliberately **not** bounded by 1.
+New work should bind to the class probabilities directly.
+
+Both models are trained on posed, frontal, well-lit faces and on acted or
+podcast speech. Treat their output as expressive rather than diagnostic.
+
+### Lab Streaming Layer
+
+LSL is a native protocol with no browser binding, so `LSLReceiver` does not
+talk to LSL directly — it connects to a relay running on the machine the
+streams are on, which forwards them as JSON over a WebSocket:
+
+```ts
+const lsl = new LSLReceiver();
+await lsl.connect("ws://localhost:8080");
+```
+
+[LSLWebsocketMirror](https://github.com/esromerog/LSLWebsocketMirror) is a
+Python script that does this. Any relay emitting the same message shape works
+— `{ "<streamKey>": { info, timeseries, timestamp } }`, `info` on the first
+message for a stream — so an existing bridge can be pointed at this instead.
+
+One relay commonly carries several devices; each LSL stream becomes its own
+yq-data stream, keyed by `source_id`.
 
 ## Pipelines
 
@@ -159,6 +221,12 @@ length a visible property of the pipeline. Anything spectral needs one upstream.
 Register your own with `registerAnalyzer(method, factory)`; built-in and custom
 nodes execute through the same evaluator.
 
+`HeartRate` detects beats with the adaptive-threshold method of Shin, Lee & Lee
+(2009) — see [References](#references) — and derives the rate from the median
+inter-beat interval. Its `spectral` strategy skips detection entirely and takes
+the dominant frequency of the pulse band, which is steadier on camera-derived
+rPPG but reports no variability.
+
 ### Multi-input nodes
 
 `Correlation` and `Difference` extend `MultiInputAnalyzer`, which takes several
@@ -213,21 +281,69 @@ const spec = spectrum(clean, { samplingRate: 256, window: "hamming" });
 const alpha = bandAverage(spec, 8, 12);
 ```
 
+## References and attribution
+
+Methods:
+
+- Shin, H.S., Lee, C. & Lee, M. (2009). Adaptive threshold method for the peak
+  detection of photoplethysmographic waveform. *Computers in Biology and
+  Medicine*, 39(12), 1145–1152.
+  [doi:10.1016/j.compbiomed.2009.10.006](https://doi.org/10.1016/j.compbiomed.2009.10.006)
+  — the peak detector and the 15-tap FIR lowpass behind `HEART_RATE`.
+- Lugaresi, C., Tang, J., Nash, H., McClanahan, C., Uboweja, E., Hays, M.,
+  Zhang, F., Chang, C.-L., Yong, M.G., Lee, J., Chang, W.-T., Hua, W., Georg, M.
+  & Grundmann, M. (2019). MediaPipe: A Framework for Building Perception
+  Pipelines. [arXiv:1906.08172](https://arxiv.org/abs/1906.08172) — the
+  framework behind `FaceLandmarkReceiver`, `PoseReceiver`, and the face
+  tracking that places the region of interest in `RPPGReceiver`.
+- Rouast, P.V., Adam, M.T.P., Cornforth, D.J., Lux, E. & Weinhardt, C. (2016).
+  Using Contactless Heart Rate Measurements for Real-Time Assessment of
+  Affective States. In *Information Systems and Neuroscience*, LNISO 10,
+  157–163.
+  [doi:10.1007/978-3-319-41402-7_20](https://doi.org/10.1007/978-3-319-41402-7_20)
+  — the rPPG approach `RPPGReceiver` follows, implemented in
+  [heartbeat-js](https://github.com/prouast/heartbeat-js).
+
+Software this package builds on:
+
+| Project | Used by |
+|---|---|
+| [muse-js](https://github.com/urish/muse-js) | `MuseReceiver` — Bluetooth GATT over Web Bluetooth |
+| [Cortex API](https://emotiv.gitbook.io/cortex-api) | `EMOTIVReceiver` — proprietary, needs EMOTIV's local software |
+| [MediaPipe Tasks](https://ai.google.dev/edge/mediapipe) | `FaceLandmarkReceiver`, `PoseReceiver`, `RPPGReceiver` |
+| [face-api.js](https://github.com/justadudewhohacks/face-api.js) | `FaceEmotionReceiver`, via the maintained [`@vladmandic` fork](https://github.com/vladmandic/face-api) |
+| [Lab Streaming Layer](https://labstreaminglayer.readthedocs.io) | `LSLReceiver`, through [LSLWebsocketMirror](https://github.com/esromerog/LSLWebsocketMirror) |
+| [ml5.js](https://ml5js.org) | `VoiceEmotionReceiver` — model format; the forward pass is this package's |
+| [formantanalyzer](https://github.com/tabahi/formantanalyzer.js) | `VoiceEmotionReceiver` — syllable segmentation and formant features |
+
 ## Dependencies
 
 Runtime dependencies are `rxjs`, `muse-js` and `mathjs`. mathjs is imported
 through its factory entry points so a bundler tree-shakes everything but the
 FFT, and it is confined to `analyzer/methods/fft.ts`.
 
-Three packages are **optional peer dependencies**, dynamically imported only
+Five packages are **optional peer dependencies**, dynamically imported only
 when a feature that needs them is used. An application that only talks to a Muse
 never downloads MediaPipe:
 
 | Package | Needed for |
 |---|---|
 | `@mediapipe/tasks-vision` | `FaceLandmarkReceiver`, `PoseReceiver`, `RPPGReceiver` |
+| `@vladmandic/face-api` | `FaceEmotionReceiver` |
+| `formantanalyzer` | `VoiceEmotionReceiver` |
 | `jszip` | `Recorder`, `FileReplayReceiver` |
 | `papaparse` | `FileReplayReceiver` |
+
+Model weights are fetched at connect time rather than bundled, so nothing large
+ships in the tarball. Every receiver that loads a model accepts a path option
+(`modelAssetPath`, `modelPath`) for applications that would rather self-host
+than reach a CDN. The voice emotion classifier lives in `models/` in this
+repository; the rest come from their upstream projects.
+
+`VoiceEmotionReceiver` runs the classifier itself rather than through
+TensorFlow.js — it is a 30k-parameter dense stack, and `ML5Classifier` reads
+ml5's saved format and does the forward pass directly, verified against
+TensorFlow.js in `tests/unit/ml5_model.test.ts`.
 
 ## Browser requirements
 

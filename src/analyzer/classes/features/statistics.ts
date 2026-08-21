@@ -103,6 +103,10 @@ export interface RMSParameters {
  *
  * In `decibels` mode the output is dBFS: negative values approaching 0 at full
  * scale, which is the convention the original audio-volume device used.
+ *
+ * That device computed loudness with essentia.js; this is a plain RMS over the
+ * raw PCM the microphone worklet already delivers, which needs no WASM build
+ * and keeps audio on the same analyzer path as every other modality.
  */
 export class RMSAnalyzer extends BaseAnalyzer {
   readonly name = "RMS";

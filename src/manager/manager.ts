@@ -17,6 +17,15 @@ import { Observable, Subject, Subscription, merge } from "rxjs";
 /** Default port name for the single-input, single-output case. */
 export const DEFAULT_PORT = "in";
 
+/** Floor for a derived staleness limit, so slow streams are never cut off. */
+const AUTO_STALE_FLOOR_MS = 1000;
+
+/** How many of its own packet intervals a port may miss before it reads as stale. */
+const AUTO_STALE_INTERVALS = 4;
+
+/** Weight of the newest gap in a port's cadence estimate. */
+const INTERVAL_SMOOTHING = 0.2;
+
 /**
  * A node in a pipeline graph.
  *
@@ -64,12 +73,44 @@ export interface PipelineOptions {
   onError?: (error: unknown, nodeId: string) => void;
 }
 
+/**
+ * Buffered inputs for one port of a multi-input node.
+ *
+ * The cadence estimate is what lets the staleness guard go unconfigured: a
+ * port falls behind relative to its own rhythm, not to some global constant.
+ */
+interface PortState {
+  /** Recent packets, oldest first. Holds one unless the policy needs history. */
+  packets: DataPacket[];
+  /** Exponential moving average of the gap between arrivals, in ms. */
+  interval?: number;
+  /** Timestamp of the most recent arrival. */
+  last?: number;
+}
+
+/** The buffered packet whose timestamp sits closest to `reference`. */
+function nearestTo(packets: DataPacket[], reference: number): DataPacket {
+  let best = packets[0];
+  let bestDistance = Math.abs(best.timestamp - reference);
+
+  for (let i = 1; i < packets.length; i++) {
+    const distance = Math.abs(packets[i].timestamp - reference);
+    // Ties go to the newer packet, which is the one still being extended.
+    if (distance <= bestDistance) {
+      best = packets[i];
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+}
+
 interface NodeRuntime {
   definition: PipelineNode;
   analyzer?: AnyAnalyzer;
   output$: Subject<DataPacket>;
-  /** Latest packet per input port, for multi-input synchronisation. */
-  pending: Map<string, DataPacket>;
+  /** Buffered packets per input port, for multi-input synchronisation. */
+  pending: Map<string, PortState>;
   /** Most recent output metadata, for describing live outputs. */
   metadata?: StreamMetadata;
   subscriptions: Subscription[];
@@ -237,8 +278,8 @@ export class Pipeline {
       let result: DataPacket | null;
 
       if (isMultiInput(analyzer)) {
-        runtime.pending.set(port, packet);
-        const gathered = this.gather(analyzer, runtime.pending);
+        this.record(analyzer, runtime.pending, port, packet);
+        const gathered = this.gather(analyzer, runtime.pending, packet);
         if (!gathered) return;
         result = analyzer.analyze(gathered);
       } else {
@@ -262,28 +303,94 @@ export class Pipeline {
   }
 
   /**
+   * Files an arriving packet under its port and updates that port's cadence
+   * estimate.
+   */
+  private record(
+    analyzer: MultiInputAnalyzer<any, any>,
+    pending: Map<string, PortState>,
+    port: string,
+    packet: DataPacket
+  ): void {
+    let state = pending.get(port);
+    if (!state) {
+      state = { packets: [] };
+      pending.set(port, state);
+    }
+
+    // Only forward gaps feed the estimate. A replayed session or a device that
+    // resets its clock delivers backwards stamps, and averaging those in would
+    // hand the staleness guard a meaningless interval.
+    const previous = state.last;
+    state.last = packet.timestamp;
+    if (previous !== undefined && packet.timestamp > previous) {
+      const gap = packet.timestamp - previous;
+      state.interval =
+        state.interval === undefined
+          ? gap
+          : state.interval * (1 - INTERVAL_SMOOTHING) + gap * INTERVAL_SMOOTHING;
+    }
+
+    state.packets.push(packet);
+
+    const depth =
+      analyzer.syncPolicy === "nearest" ? Math.max(1, analyzer.historyDepth) : 1;
+    while (state.packets.length > depth) state.packets.shift();
+  }
+
+  /**
    * Assembles a full set of inputs for a multi-input node, or null if the
    * ports are not yet ready to be paired.
+   *
+   * `trigger` is the packet that just arrived and stands in for "now".
+   * Measuring age against it rather than against the wall clock keeps the
+   * guard meaningful when a recorded session is replayed off real time.
    */
   private gather(
     analyzer: MultiInputAnalyzer<any, any>,
-    pending: Map<string, DataPacket>
+    pending: Map<string, PortState>,
+    trigger: DataPacket
   ): Record<string, DataPacket> | null {
     const gathered: Record<string, DataPacket> = {};
 
     for (const port of analyzer.ports) {
-      const packet = pending.get(port);
-      if (!packet) return null;
+      const state = pending.get(port);
+      if (!state || state.packets.length === 0) return null;
+
+      const packet =
+        analyzer.syncPolicy === "nearest"
+          ? nearestTo(state.packets, trigger.timestamp)
+          : state.packets[state.packets.length - 1];
+
+      // A port that has gone quiet stops contributing rather than pinning the
+      // output to whatever it last sent.
+      if (trigger.timestamp - packet.timestamp > this.staleAfter(analyzer, state)) {
+        return null;
+      }
+
       gathered[port] = packet;
     }
 
-    if (analyzer.syncPolicy === "timestamp") {
+    if (analyzer.syncPolicy !== "latest") {
       const timestamps = analyzer.ports.map((p) => gathered[p].timestamp);
       const spread = Math.max(...timestamps) - Math.min(...timestamps);
       if (spread > analyzer.tolerance) return null;
     }
 
     return gathered;
+  }
+
+  /**
+   * How old a packet on this port may be before it is read as belonging to a
+   * stream that has stopped.
+   */
+  private staleAfter(
+    analyzer: MultiInputAnalyzer<any, any>,
+    state: PortState
+  ): number {
+    if (analyzer.maxAge !== "auto") return analyzer.maxAge;
+    if (state.interval === undefined) return AUTO_STALE_FLOOR_MS;
+    return Math.max(AUTO_STALE_FLOOR_MS, state.interval * AUTO_STALE_INTERVALS);
   }
 
   /* ---------------------------------------------------------------------- */

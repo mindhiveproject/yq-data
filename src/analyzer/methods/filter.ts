@@ -253,10 +253,14 @@ export function filtfiltCascade(
 }
 
 /**
- * 15-tap FIR lowpass used by the reference PPG pipeline.
+ * 15-tap FIR lowpass from the Shin, Lee & Lee (2009) PPG peak-detection
+ * pipeline, where it is the preprocessing stage ahead of the adaptive
+ * threshold.
  *
- * Retained verbatim so heart-rate output stays comparable with the original
- * You-Quantified implementation.
+ * Retained verbatim so heart-rate output stays comparable with both the paper
+ * and the original You-Quantified implementation.
+ *
+ * @see https://doi.org/10.1016/j.compbiomed.2009.10.006
  */
 export const PPG_LOWPASS_FIR: FilterCoefficients = {
   b: [
