@@ -4,7 +4,7 @@ import {
   ProcessingStage,
   StreamMetadata,
 } from "../../../data_stream.interface";
-import { BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer } from "../../base_analyzer";
 
 export interface WindowingParameters {
   /** Window length. Seconds unless `unit` says otherwise. */
@@ -53,10 +53,9 @@ export class Windowing extends BaseAnalyzer {
     });
   }
 
-  compatible(meta: StreamMetadata): boolean {
-    // Windowing needs a rate to interpret a size in seconds; in samples it
-    // works on anything.
-    return this.parameters.unit === "samples" || meta.samplingRate !== undefined;
+  /** A size in seconds needs a rate to interpret it; in samples it does not. */
+  get accepts(): Accepts {
+    return { requiresSamplingRate: this.parameters.unit !== "samples" };
   }
 
   public reset(): void {

@@ -1,6 +1,10 @@
-import { DataPacket, StreamMetadata } from "../data_stream.interface";
+import {
+  DataPacket,
+  StreamMetadata,
+  ValueType,
+} from "../data_stream.interface";
 import { BaseReceiver } from "../receiver/base_receiver";
-import { getChannelCount } from "../utility";
+import { getChannelCount, getValueType } from "../utility";
 import { Observable, Subscription } from "rxjs";
 
 export interface RecorderOptions {
@@ -21,6 +25,9 @@ interface Track {
   /** Interleaved samples accumulated so far. */
   rows: number[];
   timestamps: number[];
+  /** Categorical value per sample, for streams that carry one. */
+  labels: string[];
+  valueType: ValueType;
   sampleCount: number;
   truncated: boolean;
 }
@@ -30,6 +37,11 @@ const README = `Hi! I'm a small file describing the contents of this folder.
 Each recorded stream is saved as its own CSV file, with one column per channel
 and one row per sample. metadata.csv lists every file along with its device,
 signal type and sampling rate.
+
+Streams of timed events (event markers) have a "label" column holding the
+event name, and no sampling rate — one row per event rather than one row per
+tick. Their numeric column is a per-label code, listed in metadata.csv's
+companion stream, and exists only so the file still parses as numbers.
 
 Data gathered in a web browser can have unreliable timing and sampling rates.
 Be careful about relying on it for research purposes without validating the
@@ -140,6 +152,8 @@ export class Recorder {
         channels,
         rows: [],
         timestamps: [],
+        labels: [],
+        valueType: getValueType(packet.metadata),
         sampleCount: 0,
         truncated: false,
       };
@@ -162,6 +176,9 @@ export class Recorder {
     for (let i = 0; i < samples; i++) {
       for (let c = 0; c < channelCount; c++) {
         track.rows.push(packet.data[i * channelCount + c]);
+      }
+      if (track.valueType === "categorical") {
+        track.labels.push(packet.labels?.[i] ?? "");
       }
       if (this.options.includeTimestamps) {
         // Packets carry one timestamp for the whole chunk; interpolate within
@@ -197,6 +214,7 @@ export class Recorder {
         "device name": device?.model ?? "",
         type: track.metadata.modality,
         sampling_rate: track.metadata.samplingRate ?? "",
+        value_type: track.valueType,
         channels: track.channels.length,
         samples: track.sampleCount,
         stream_id: streamID,
@@ -226,15 +244,22 @@ export class Recorder {
 
   private toCSV(track: Track): string {
     const channels = track.channels.length;
-    const header = this.options.includeTimestamps
-      ? ["timestamp", ...track.channels]
-      : track.channels;
+    // The label column comes first on a categorical track: it is the value
+    // being recorded, and the numeric code beside it is only there so the file
+    // still reads as numbers to anything that expects them.
+    const categorical = track.valueType === "categorical";
+    const header = [
+      ...(this.options.includeTimestamps ? ["timestamp"] : []),
+      ...(categorical ? ["label"] : []),
+      ...track.channels,
+    ];
 
     const lines: string[] = [header.map(escapeCSV).join(",")];
 
     for (let i = 0; i < track.sampleCount; i++) {
       const values: (string | number)[] = [];
       if (this.options.includeTimestamps) values.push(track.timestamps[i]);
+      if (categorical) values.push(escapeCSV(track.labels[i] ?? ""));
       for (let c = 0; c < channels; c++) {
         values.push(track.rows[i * channels + c]);
       }

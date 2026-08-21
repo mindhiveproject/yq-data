@@ -14,11 +14,14 @@ export {
   isMultiInput,
 } from "./base_analyzer";
 export type {
+  Accepts,
   AnyAnalyzer,
   SyncPolicy,
   SyncParameters,
   EmitOptions,
 } from "./base_analyzer";
+
+export * from "./compatibility";
 
 export * from "./methods";
 export * from "./classes";

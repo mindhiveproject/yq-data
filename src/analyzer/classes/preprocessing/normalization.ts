@@ -2,9 +2,8 @@ import {
   AnalysisMethod,
   DataPacket,
   ProcessingStage,
-  StreamMetadata,
 } from "../../../data_stream.interface";
-import { BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 import { minMaxNormalize, zScore, remap } from "../../methods/stats";
 
@@ -65,9 +64,7 @@ export class Normalization extends BaseAnalyzer {
     });
   }
 
-  compatible(_meta: StreamMetadata): boolean {
-    return true;
-  }
+  readonly accepts: Accepts = {};
 
   public reset(): void {
     this.runningMin = [];

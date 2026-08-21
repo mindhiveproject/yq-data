@@ -7,8 +7,48 @@ import {
   StreamIdentifierLiteral,
   ChannelInfo,
   TypedArray,
+  ValueType,
 } from "../data_stream.interface";
 import { stringToStreamID, streamIDToString } from "../utility";
+
+/**
+ * What a node will accept on one of its inputs.
+ *
+ * Declarative rather than a predicate, because the question a node editor asks
+ * is "may I draw this edge?" — asked before any data exists, and needing an
+ * answer it can render. Every field is checked against {@link StreamMetadata},
+ * which a receiver publishes at `initializeStream()`, so the whole graph can
+ * be validated the moment its sources are known.
+ *
+ * A node whose rules depend on its own configuration implements `accepts` as a
+ * getter over `this.parameters`; the result is still a plain object, just one
+ * computed per configured node.
+ */
+export interface Accepts {
+  /**
+   * Reject streams with no `samplingRate`.
+   *
+   * Set by everything that interprets samples as a time series — filters,
+   * spectra, anything measuring rate — and it is what excludes irregular
+   * sources such as event markers without naming them.
+   */
+  requiresSamplingRate?: boolean;
+
+  /** Restrict to particular modalities. Unset accepts any. */
+  modalities?: Modality[];
+
+  /**
+   * Which scales of measurement this input will take. Defaults to
+   * `["numeric"]` — unlike {@link modalities}, leaving it unset restricts
+   * rather than admits, because accepting a scale a node cannot interpret is
+   * the failure worth defaulting against.
+   *
+   * Numeric nodes leave it alone: averaging marker codes or filtering them
+   * produces a number, which is worse than an error because nothing
+   * downstream can tell it is meaningless.
+   */
+  valueTypes?: ValueType[];
+}
 
 /** Overrides an analyzer may apply to the packet it emits. */
 export interface EmitOptions {
@@ -26,6 +66,8 @@ export interface EmitOptions {
   additionalMetadata?: Record<string, any>;
   /** Overrides the packet timestamp. Defaults to the input's. */
   timestamp?: number;
+  /** Categorical value per sample, for nodes that emit labels. */
+  labels?: string[];
 }
 
 /**
@@ -126,6 +168,10 @@ export abstract class AbstractAnalyzer {
       modality,
       name,
       channelCount,
+      // Declared from what this node actually emits rather than inherited, so
+      // a node that turns labels into numbers — or numbers into labels — ends
+      // up describing its own output instead of its input's.
+      valueType: options.labels !== undefined ? "categorical" : "numeric",
       ...(channelInfo ? { channelInfo } : {}),
       ...(options.samplingRate !== undefined
         ? { samplingRate: options.samplingRate }
@@ -139,6 +185,7 @@ export abstract class AbstractAnalyzer {
       metadata,
     };
 
+    if (options.labels !== undefined) packet.labels = options.labels;
     if (input.deviceTime !== undefined) packet.deviceTime = input.deviceTime;
 
     return packet;
@@ -156,8 +203,8 @@ export abstract class BaseAnalyzer<
   In extends TypedArray = Float32Array,
   Out extends TypedArray = Float32Array
 > extends AbstractAnalyzer {
-  /** Whether this analyzer can consume a stream with the given metadata. */
-  abstract compatible(meta: StreamMetadata): boolean;
+  /** What this analyzer will accept on its single input. */
+  abstract readonly accepts: Accepts;
 
   abstract analyze(packet: DataPacket<In>): DataPacket<Out> | null;
 }
@@ -269,8 +316,15 @@ export abstract class MultiInputAnalyzer<
     return this.ports[0];
   }
 
-  /** Whether this analyzer can consume the given set of input streams. */
-  abstract compatible(metas: Record<string, StreamMetadata>): boolean;
+  /**
+   * What each named port will accept, keyed by port name.
+   *
+   * Per port rather than per node, so a future marker-driven node can require
+   * a categorical stream on one input and a sampled signal on another. Whether
+   * every port is actually connected is a property of the graph, checked by
+   * the pipeline rather than restated here.
+   */
+  abstract readonly accepts: Record<string, Accepts>;
 
   abstract analyze(
     packets: Record<string, DataPacket<In>>

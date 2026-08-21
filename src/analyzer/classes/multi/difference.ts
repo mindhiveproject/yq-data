@@ -3,9 +3,8 @@ import {
   ChannelInfo,
   DataPacket,
   ProcessingStage,
-  StreamMetadata,
 } from "../../../data_stream.interface";
-import { MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
+import { Accepts, MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 
 export interface DifferenceParameters extends SyncParameters {
@@ -37,9 +36,7 @@ export class Difference extends MultiInputAnalyzer {
     super({ mode: "similarity", summaryOnly: false, ...parameters });
   }
 
-  compatible(metas: Record<string, StreamMetadata>): boolean {
-    return Boolean(metas.a && metas.b);
-  }
+  readonly accepts: Record<string, Accepts> = { a: {}, b: {} };
 
   private combine(x: number, y: number): number {
     switch (this.parameters.mode) {

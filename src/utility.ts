@@ -4,7 +4,9 @@ import {
   ProcessingStage,
   StreamIdentifier,
   StreamIdentifierLiteral,
+  StreamMetadata,
   TypedArray,
+  ValueType,
 } from "./data_stream.interface";
 
 /**
@@ -61,6 +63,23 @@ export function stringToStreamID(
     processingStage: parts[2] as ProcessingStage,
     name: parts.length > 3 ? parts[3] : undefined,
   };
+}
+
+/**
+ * Scale of measurement for a stream, defaulting to `"numeric"`.
+ *
+ * Reads the declaration on the metadata rather than looking for labels on a
+ * packet, so the answer is the same before and after data starts flowing. The
+ * one place the default lives, so a source that never sets `valueType` — every
+ * device but the marker receiver — still reports something definite.
+ */
+export function getValueType(meta: StreamMetadata): ValueType {
+  return meta.valueType ?? "numeric";
+}
+
+/** Whether a stream carries categorical values rather than measurements. */
+export function isCategorical(meta: StreamMetadata): boolean {
+  return getValueType(meta) === "categorical";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -191,6 +210,7 @@ export function withData<T extends TypedArray>(
     timestamp: packet.timestamp,
     data,
     metadata: packet.metadata,
+    ...(packet.labels !== undefined ? { labels: packet.labels } : {}),
     ...(packet.deviceTime !== undefined ? { deviceTime: packet.deviceTime } : {}),
     ...overrides,
   };

@@ -12,6 +12,7 @@ import {
   isMultiInput,
 } from "../analyzer/base_analyzer";
 import { createAnalyzer } from "../analyzer/registry";
+import { acceptsFor, checkAccepts } from "../analyzer/compatibility";
 import { Observable, Subject, Subscription, merge } from "rxjs";
 
 /** Default port name for the single-input, single-output case. */
@@ -114,6 +115,20 @@ interface NodeRuntime {
   /** Most recent output metadata, for describing live outputs. */
   metadata?: StreamMetadata;
   subscriptions: Subscription[];
+  /** Ports whose incoming metadata has already been checked. */
+  checked: Set<string>;
+  /** Ports refused by the compatibility check; their packets are dropped. */
+  blocked: Set<string>;
+}
+
+/** A compatibility problem found in a graph. */
+export interface PipelineIssue {
+  /** Node the problem was found at. */
+  nodeId: string;
+  /** Input port it concerns, when the node has named ports. */
+  port?: string;
+  /** What is wrong, in a form fit to show someone. */
+  reason: string;
 }
 
 /**
@@ -227,6 +242,8 @@ export class Pipeline {
         output$: new Subject<DataPacket>(),
         pending: new Map(),
         subscriptions: [],
+        checked: new Set(),
+        blocked: new Set(),
       });
     }
 
@@ -274,6 +291,8 @@ export class Pipeline {
   ): void {
     const analyzer = runtime.analyzer!;
 
+    if (!this.admits(runtime, port, packet.metadata)) return;
+
     try {
       let result: DataPacket | null;
 
@@ -300,6 +319,65 @@ export class Pipeline {
         );
       }
     }
+  }
+
+  /**
+   * Gates a port on the compatibility of the stream arriving at it.
+   *
+   * Checked once per port, on the first packet, because a stream's metadata is
+   * fixed for its lifetime and re-checking it per packet would put a string
+   * comparison in the hot path of a 256 Hz signal. A refused port is recorded
+   * so later packets are dropped without re-deriving the reason.
+   *
+   * Refusal drops the branch rather than throwing: one incompatible edge in a
+   * graph should not take down the streams that are working, which for a live
+   * session means the visual keeps running on whatever inputs are valid.
+   */
+  private admits(
+    runtime: NodeRuntime,
+    port: string,
+    meta: StreamMetadata
+  ): boolean {
+    if (runtime.blocked.has(port)) return false;
+    if (runtime.checked.has(port)) return true;
+
+    runtime.checked.add(port);
+
+    const verdict = this.verdictFor(runtime, port, meta);
+    if (verdict === true) return true;
+
+    runtime.blocked.add(port);
+    const error = new Error(
+      `Node "${runtime.definition.id}" (${runtime.analyzer!.name}) cannot accept input on port "${port}": ${verdict}`
+    );
+
+    if (this.options.onError) {
+      this.options.onError(error, runtime.definition.id);
+    } else {
+      console.error(error.message);
+    }
+
+    return false;
+  }
+
+  /** Compatibility of one stream with one of a node's input ports. */
+  private verdictFor(
+    runtime: NodeRuntime,
+    port: string,
+    meta: StreamMetadata
+  ): true | string {
+    const analyzer = runtime.analyzer;
+    if (!analyzer) return true;
+
+    const accepts = acceptsFor(analyzer, port);
+    if (!accepts) {
+      const ports = isMultiInput(analyzer)
+        ? Object.keys(analyzer.accepts).join(", ")
+        : DEFAULT_PORT;
+      return `no such input port (expected one of: ${ports})`;
+    }
+
+    return checkAccepts(accepts, meta);
   }
 
   /**
@@ -483,6 +561,11 @@ export class Pipeline {
     for (const runtime of this.nodes.values()) {
       runtime.analyzer?.reset();
       runtime.pending.clear();
+      // A reconnected device may describe itself differently — an LSL relay
+      // re-announcing a stream, say — so past verdicts are re-derived rather
+      // than carried over.
+      runtime.checked.clear();
+      runtime.blocked.clear();
     }
   }
 
@@ -496,6 +579,121 @@ export class Pipeline {
     }
     this.nodes.clear();
     this.receivers.clear();
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Validation                                                              */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Every compatibility problem the graph can be shown to have right now.
+   *
+   * Two kinds are reported: an input port with nothing wired to it, and a port
+   * fed by a stream its node cannot interpret. The second is only decidable
+   * where the upstream metadata is known — which covers source nodes as soon
+   * as their receiver is attached, since a receiver publishes stream metadata
+   * at registration rather than on first packet. An analyzer's output is
+   * unknown until it has emitted once, so edges downstream of a silent
+   * analyzer are not judged here; the runtime check in `admits()` is what
+   * eventually catches those.
+   *
+   * Returns an empty array for a graph with nothing wrong *and* for one whose
+   * sources are not attached yet, so treat it as "no known problems".
+   */
+  public issues(): PipelineIssue[] {
+    const found: PipelineIssue[] = [];
+
+    for (const runtime of this.nodes.values()) {
+      const analyzer = runtime.analyzer;
+      if (!analyzer) continue;
+
+      const nodeId = runtime.definition.id;
+      const edges = this.incoming.get(nodeId) ?? [];
+
+      if (isMultiInput(analyzer)) {
+        const wired = new Set(
+          edges.map((edge) => edge.to[1] ?? analyzer.primaryPort)
+        );
+        for (const port of analyzer.ports) {
+          if (!wired.has(port)) {
+            found.push({
+              nodeId,
+              port,
+              reason: `input port "${port}" is not connected`,
+            });
+          }
+        }
+      } else if (edges.length === 0) {
+        found.push({ nodeId, reason: "node has no input" });
+      }
+
+      for (const edge of edges) {
+        const port = edge.to[1] ?? this.defaultPortFor(analyzer);
+        for (const meta of this.knownOutputsOf(edge.from[0])) {
+          const verdict = this.verdictFor(runtime, port, meta);
+          if (verdict !== true) found.push({ nodeId, port, reason: verdict });
+        }
+      }
+    }
+
+    return found;
+  }
+
+  /**
+   * Throws if the graph has any known compatibility problem.
+   *
+   * Reports all of them at once: someone fixing a stored graph wants the whole
+   * list, not one error per edit-and-rerun cycle.
+   */
+  public validate(): void {
+    const found = this.issues();
+    if (found.length === 0) return;
+
+    const detail = found
+      .map((issue) =>
+        issue.port
+          ? `  - "${issue.nodeId}" port "${issue.port}": ${issue.reason}`
+          : `  - "${issue.nodeId}": ${issue.reason}`
+      )
+      .join("\n");
+
+    throw new Error(
+      `Pipeline graph has ${found.length} compatibility problem${
+        found.length === 1 ? "" : "s"
+      }:\n${detail}`
+    );
+  }
+
+  /**
+   * Output metadata of a node, where it can be known without running the
+   * graph. Empty when it cannot.
+   */
+  private knownOutputsOf(nodeId: string): StreamMetadata[] {
+    const runtime = this.nodes.get(nodeId);
+    if (!runtime) return [];
+
+    const receiverKey = runtime.definition.receiver;
+    if (receiverKey === undefined) {
+      return runtime.metadata ? [runtime.metadata] : [];
+    }
+
+    const receiver = this.receivers.get(receiverKey);
+    if (!receiver) return [];
+
+    const stream = runtime.definition.stream;
+    const ids = stream !== undefined ? [stream] : receiver.streams;
+
+    const metas: StreamMetadata[] = [];
+    for (const id of ids) {
+      try {
+        const meta = receiver.getStreamMeta(id);
+        if (meta) metas.push(meta);
+      } catch {
+        // An identifier the receiver does not recognise is a wiring mistake,
+        // but not one the compatibility layer can describe usefully.
+      }
+    }
+    return metas;
   }
 
   /* ---------------------------------------------------------------------- */

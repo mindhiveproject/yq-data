@@ -11,6 +11,22 @@ import {
 import { BehaviorSubject, Subject, Observable } from "rxjs";
 import { streamIDToString, isValidStreamID, toInterleaved } from "../utility";
 
+/** Per-packet overrides a receiver may supply when publishing. */
+export interface PacketOptions {
+  /**
+   * Wall-clock time (ms UTC) the sample was produced.
+   *
+   * Supply this only when the source's clock is the same one `Date.now()`
+   * reads — another context on this machine, which covers a script sharing the
+   * page and anything arriving over postMessage or a BroadcastChannel. A
+   * remote or hardware clock belongs in `deviceTime`, which stays in its own
+   * domain and makes no claim to be comparable.
+   */
+  timestamp?: number;
+  /** Categorical value per sample. See {@link DataPacket.labels}. */
+  labels?: string[];
+}
+
 /**
  * Base class for all data receivers.
  * This class provides a common interface and basic functionality for receiving data streams.
@@ -213,7 +229,8 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
       deviceID?: string | number;
     },
     data: number | ArrayLike<number> | ArrayLike<number>[],
-    deviceTime?: number
+    deviceTime?: number,
+    options: PacketOptions = {}
   ): void {
     if (!this.isConnected) return;
 
@@ -243,10 +260,19 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
 
     const currentData: DataPacket<DataType> = {
       streamID: streamIDString,
-      timestamp: Date.now(),
+      // Ingest time, unless the source knows better. A device streaming
+      // continuously has no better answer than "now", but an event marker does
+      // — its onset is the moment the experiment recorded it, not the moment
+      // the packet reached us, and those differ by however long the source
+      // took to hand it over.
+      timestamp: options.timestamp ?? Date.now(),
       data: toInterleaved(data) as DataType,
       metadata: meta,
     };
+
+    if (options.labels !== undefined) {
+      currentData.labels = options.labels;
+    }
 
     if (deviceTime !== undefined) {
       currentData.deviceTime = deviceTime;

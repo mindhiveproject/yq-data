@@ -4,9 +4,8 @@ import {
   DataPacket,
   Modality,
   ProcessingStage,
-  StreamMetadata,
 } from "../../../data_stream.interface";
-import { BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer } from "../../base_analyzer";
 import { getChannelCount, deinterleave } from "../../../utility";
 import { spectrum, bandAverage, bandSum, SpectrumScaling } from "../../methods/fft";
 import { WindowType } from "../../methods/window";
@@ -70,9 +69,7 @@ export class BandPower extends BaseAnalyzer {
     });
   }
 
-  compatible(meta: StreamMetadata): boolean {
-    return meta.samplingRate !== undefined && meta.samplingRate > 0;
-  }
+  readonly accepts: Accepts = { requiresSamplingRate: true };
 
   analyze(packet: DataPacket): DataPacket | null {
     const rate = packet.metadata.samplingRate;

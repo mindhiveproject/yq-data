@@ -3,9 +3,8 @@ import {
   ChannelInfo,
   DataPacket,
   ProcessingStage,
-  StreamMetadata,
 } from "../../../data_stream.interface";
-import { MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
+import { Accepts, MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
 import { getChannelCount, deinterleave } from "../../../utility";
 import { correlation } from "../../methods/stats";
 
@@ -46,9 +45,7 @@ export class Correlation extends MultiInputAnalyzer {
     super({ mode: "paired", absolute: false, ...parameters });
   }
 
-  compatible(metas: Record<string, StreamMetadata>): boolean {
-    return Boolean(metas.a && metas.b);
-  }
+  readonly accepts: Record<string, Accepts> = { a: {}, b: {} };
 
   analyze(packets: Record<string, DataPacket>): DataPacket | null {
     const a = packets.a;

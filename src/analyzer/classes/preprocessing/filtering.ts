@@ -2,9 +2,8 @@ import {
   AnalysisMethod,
   DataPacket,
   ProcessingStage,
-  StreamMetadata,
 } from "../../../data_stream.interface";
-import { BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer } from "../../base_analyzer";
 import { getChannelCount, interleave, deinterleave } from "../../../utility";
 import {
   Biquad,
@@ -58,9 +57,7 @@ export class Filtering extends BaseAnalyzer {
     });
   }
 
-  compatible(meta: StreamMetadata): boolean {
-    return meta.samplingRate !== undefined && meta.samplingRate > 0;
-  }
+  readonly accepts: Accepts = { requiresSamplingRate: true };
 
   public reset(): void {
     this.sections = null;

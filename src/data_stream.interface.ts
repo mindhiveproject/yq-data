@@ -45,6 +45,21 @@ export interface DataPacket<DataType extends TypedArray = Float32Array> {
    */
   data: DataType;
 
+  /**
+   * Categorical value of each sample, for streams that carry one.
+   *
+   * Parallel to {@link data}: entry `i` names sample `i`, so a packet with
+   * `labels` holds one label per sample and `channelCount` is 1. Set only by
+   * streams whose `metadata.valueType` is `"categorical"` — event markers, and
+   * the argmax output of a classifier — and left undefined by every numeric
+   * stream, which is nearly all of them.
+   *
+   * Numeric analyzers never read this field. A classifier that emits *scores*
+   * does not need it either: score-per-class is an ordinary multi-channel
+   * packet whose classes are named by `metadata.channelInfo`.
+   */
+  labels?: string[];
+
   /** Metadata about the data stream */
   metadata: StreamMetadata;
 
@@ -103,6 +118,22 @@ export interface DeviceMetadata {
 }
 
 /**
+ * The measurement scale of the values a stream carries.
+ *
+ * - `"numeric"` — values are measurements, and the arithmetic an analyzer
+ *   performs on them means something. Nearly every stream.
+ * - `"categorical"` — values name a category from a finite set. The string in
+ *   {@link DataPacket.labels} is the value; the number beside it in
+ *   {@link DataPacket.data} is an arbitrary code, so averaging or filtering it
+ *   yields a number that means nothing.
+ *
+ * A union rather than a boolean because this is a scale of measurement, and
+ * the scale that sits between these two — an ordinal rating, a sleep stage —
+ * is neither free to average nor unordered.
+ */
+export type ValueType = "numeric" | "categorical";
+
+/**
  * Metadata for data streams
  */
 export interface StreamMetadata {
@@ -116,6 +147,18 @@ export interface StreamMetadata {
 
   /** Data sampling rate in Hz */
   samplingRate?: number;
+
+  /**
+   * Scale of measurement for the values on this stream. Defaults to
+   * `"numeric"`; read it through {@link getValueType} rather than directly, so
+   * a stream that predates the field still answers.
+   *
+   * Declared on the stream rather than inferred from a packet so that a graph
+   * can be checked for compatibility before any data flows — which is what
+   * lets a node editor refuse to draw an illegal edge instead of failing at
+   * runtime.
+   */
+  valueType?: ValueType;
 
   /**
    * Number of interleaved channels in every packet on this stream.

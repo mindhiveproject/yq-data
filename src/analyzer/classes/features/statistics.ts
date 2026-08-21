@@ -3,9 +3,8 @@ import {
   ChannelInfo,
   DataPacket,
   ProcessingStage,
-  StreamMetadata,
 } from "../../../data_stream.interface";
-import { BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer } from "../../base_analyzer";
 import { getChannelCount, deinterleave } from "../../../utility";
 import {
   mean,
@@ -55,9 +54,7 @@ export class StatisticalFeatures extends BaseAnalyzer {
     super({ features: ["mean", "std", "rms"], ...parameters });
   }
 
-  compatible(_meta: StreamMetadata): boolean {
-    return true;
-  }
+  readonly accepts: Accepts = {};
 
   analyze(packet: DataPacket): DataPacket | null {
     const channels = getChannelCount(packet);
@@ -117,9 +114,7 @@ export class RMSAnalyzer extends BaseAnalyzer {
     super({ decibels: false, floor: -100, ...parameters });
   }
 
-  compatible(_meta: StreamMetadata): boolean {
-    return true;
-  }
+  readonly accepts: Accepts = {};
 
   analyze(packet: DataPacket): DataPacket | null {
     const channels = getChannelCount(packet);

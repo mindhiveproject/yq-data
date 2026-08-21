@@ -5,7 +5,7 @@ import {
   ProcessingStage,
   StreamMetadata,
 } from "../../../data_stream.interface";
-import { BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 
 export interface ChannelSelectionParameters {
@@ -33,9 +33,7 @@ export class ChannelSelection extends BaseAnalyzer {
     super({ indices: [0], labels: undefined, average: false, ...parameters });
   }
 
-  compatible(_meta: StreamMetadata): boolean {
-    return true;
-  }
+  readonly accepts: Accepts = {};
 
   private resolveIndices(meta: StreamMetadata, channels: number): number[] {
     const labels: string[] | undefined = this.parameters.labels;

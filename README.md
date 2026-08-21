@@ -21,6 +21,7 @@ interface DataPacket {
   streamID: string;        // "muse-4B2C:eeg:features:band_power"
   timestamp: number;       // ms since epoch, host clock
   data: Float32Array;      // sample-interleaved
+  labels?: string[];       // categorical value per sample, for marker streams
   metadata: StreamMetadata;
   deviceTime?: number;     // the device's own clock, when it keeps one
 }
@@ -48,6 +49,48 @@ and unit, and `processingHistory` accumulates a record of every analyzer a
 packet passed through, so a value arriving at the far end of a graph can still
 explain where it came from.
 
+**Almost every stream is numeric.** `labels` is the exception: event markers
+set it, and so would a classifier emitting a decision rather than scores. A
+classifier emitting *scores* needs nothing special — score-per-class is an
+ordinary multi-channel packet whose classes are named by `channelInfo`. A
+stream declares which it is with `metadata.valueType`, which is `"numeric"`
+unless it says otherwise and `"categorical"` when the value is the label and
+the number beside it only a code. Because it is declared on the stream, a
+graph can be checked before any data flows.
+
+## Event markers
+
+`MarkerReceiver` is a stream of timed events pushed in by whatever code runs
+alongside the pipeline. It is the bridge to an experiment: a jsPsych trial
+marks its own onset, and that marker lands on the same clock, in the same
+recording, as the EEG beside it.
+
+```ts
+import { MarkerReceiver } from "yq-data";
+
+const markers = new MarkerReceiver();
+markers.connect();
+
+// in a jsPsych trial
+on_start: () => markers.mark("stimulus_onset", { timestamp: Date.now() }),
+```
+
+Pass `timestamp` captured at the event itself wherever you can. `mark()` will
+stamp the moment it is called, but that is already after whatever ran between
+the event and the call.
+
+Each marker is one sample: the string in `labels`, and a numeric code in `data`
+assigned per distinct label so a CSV column and any numeric consumer still see
+something sensible. `Recorder` writes markers as their own CSV with a `label`
+column, which means a session can be epoched offline in MNE or R straight from
+the exported archive.
+
+Markers are irregular, so the stream carries no `samplingRate` — and that,
+together with `valueType: "categorical"`, is what keeps them out of analyzers
+that would quietly average or filter marker codes into a meaningless number.
+An analyzer opts in with `accepts.valueTypes`, which defaults to `["numeric"]`.
+See [compatibility](#compatibility) below.
+
 ## Receivers
 
 A receiver owns a connection to one source and publishes packets.
@@ -63,6 +106,7 @@ A receiver owns a connection to one source and publishes packets.
 | `FaceEmotionReceiver` | Camera | 7 facial expression probabilities |
 | `PoseReceiver` | Camera | 33 body landmarks |
 | `RPPGReceiver` | Camera | Pulse-bearing RGB signal from facial skin |
+| `MarkerReceiver` | Your own code | Timed [event markers](#event-markers); no device to connect |
 | `VoiceEmotionReceiver` | Microphone | 4 speech emotion probabilities, per phrase |
 | `FileReplayReceiver` | A recording | No hardware, no permissions, no network |
 
@@ -193,6 +237,48 @@ pipeline.getOutput("bands").subscribe((packet) => {
 Receivers can be attached before or after `start()`, which matters because a
 user connects their headset long after the graph was built. Cyclic graphs and
 unknown methods are rejected at construction rather than failing at runtime.
+
+### Compatibility
+
+Every analyzer declares what it will accept as data, not as a predicate:
+
+```ts
+readonly accepts: Accepts = { requiresSamplingRate: true };
+```
+
+That declaration is checked against `StreamMetadata`, which a receiver
+publishes when it registers a stream — before any packet arrives. So the
+question a node editor needs answered ("may I draw this edge?") can be answered
+while the user is still dragging it:
+
+```ts
+import { canConnect, compatibleMethods, registeredMethods } from "yq-data";
+
+canConnect(markerMeta, AnalysisMethod.BAND_POWER);
+//=> 'stream "markers:event_marker:raw" carries labels rather than
+//    measurements, which this node cannot interpret'
+
+compatibleMethods(eegMeta, registeredMethods());
+//=> ["filtering", "windowing", "band_power", ...]
+```
+
+A whole graph can be checked at once. `issues()` returns every problem it can
+prove — an unconnected input port, or a port fed by a stream its node cannot
+read — and `validate()` throws with the full list rather than one error per
+edit-and-rerun cycle:
+
+```ts
+pipeline.attachReceiver("markers", markers);
+pipeline.validate();
+// Error: Pipeline graph has 1 compatibility problem:
+//   - "power" port "in": stream "markers:event_marker:raw" carries labels ...
+```
+
+Validation only judges what is knowable: an analyzer's output metadata is
+unknown until it has emitted once, so edges downstream of a silent analyzer are
+checked at runtime instead, on the first packet through each port. A port that
+fails there is dropped and reported through `onError` — one bad edge should not
+take down the streams that are working.
 
 ### Windowing is explicit
 
