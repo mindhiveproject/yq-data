@@ -239,7 +239,23 @@ export type SyncPolicy =
    * a BLE headset alongside a webcam is the usual pairing. It never waits for
    * a better match to show up, since that would add latency to a live signal.
    */
-  | "nearest";
+  | "nearest"
+  /**
+   * Deliver every arrival immediately, and consume the trigger port.
+   *
+   * The other policies pair streams that are all running continuously. This
+   * one is for a node driven by *occurrences*: a marker, a threshold crossing,
+   * anything sporadic. Ports are delivered as they arrive rather than paired,
+   * so `analyze` sees a record of exactly what arrived since the last call,
+   * in which any port may be absent. Each packet is delivered once and then
+   * consumed, so a node accumulating state never counts the same samples
+   * twice and a trigger fires exactly once per event.
+   *
+   * The staleness guard does not apply. A trigger stream is *supposed* to go
+   * quiet between events, and judging it against a cadence it does not have
+   * would silence the node permanently.
+   */
+  | "event";
 
 /**
  * Synchronisation settings every multi-input node accepts.
@@ -326,8 +342,13 @@ export abstract class MultiInputAnalyzer<
    */
   abstract readonly accepts: Record<string, Accepts>;
 
+  /**
+   * A port may be absent from `packets`: under `event` only the ports that
+   * have actually arrived are present, and under every other policy a node
+   * still runs before all of its inputs have produced anything.
+   */
   abstract analyze(
-    packets: Record<string, DataPacket<In>>
+    packets: Record<string, DataPacket<In> | undefined>
   ): DataPacket<Out> | null;
 }
 

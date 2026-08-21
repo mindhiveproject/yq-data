@@ -301,6 +301,7 @@ length a visible property of the pipeline. Anything spectral needs one upstream.
 | `STATISTICAL_FEATURES` | `StatisticalFeatures` | Mean, std, RMS, min, max, range |
 | `RMS` | `RMSAnalyzer` | Amplitude, linear or dBFS |
 | `HEART_RATE` | `HeartRate` | BPM from a pulse waveform, plus HRV |
+| `EPOCHING` | `Epoching` | Cuts a window of signal around each event marker |
 | `CONNECTIVITY` | `Correlation` | Correlation between two streams |
 | `difference` | `Difference` | Element-wise comparison — facial synchrony |
 
@@ -328,6 +329,66 @@ edges: [
 Ports pair by `syncPolicy`: `"latest"` (default) emits on every packet using the
 last value seen on each other port; `"timestamp"` waits until every port has a
 packet within `tolerance` ms — appropriate only for sources that share a clock.
+
+`"event"` does not pair at all. It is for nodes driven by *occurrences* rather
+than by two continuous streams: every port is delivered exactly once, on the
+tick it arrives, so `analyze` receives a record of what is new and any quiet
+port is simply absent. The staleness guard does not apply, because a trigger
+stream is supposed to go quiet between events. `Epoching` uses it.
+
+### Epoching
+
+`Epoching` cuts a fixed window of signal around each event marker. It is the
+node markers exist for, and the one join the compatibility layer otherwise
+forbids — `signal` takes a sampled numeric stream, `marker` takes a categorical
+one, and nothing else fits either port:
+
+```ts
+const pipeline = new Pipeline({
+  nodes: [
+    { id: "eeg",     receiver: "muse", stream: Modality.EEG },
+    { id: "markers", receiver: "markers" },
+    { id: "epochs",  method: AnalysisMethod.EPOCHING,
+      parameters: { pre: 0.2, post: 0.8, baseline: "mean" } },
+  ],
+  edges: [
+    { from: ["eeg"],     to: ["epochs", "signal"] },
+    { from: ["markers"], to: ["epochs", "marker"] },
+  ],
+});
+
+pipeline.getOutput("epochs").subscribe((epoch) => {
+  const { label, markerTime, samples } = epoch.metadata.additionalMetadata.epoch;
+});
+```
+
+Each epoch is one packet, stamped at the **marker's onset** rather than at the
+moment it was cut, so epochs from different trials line up against each other.
+Its marker travels in `additionalMetadata.epoch` as an `EpochInfo`.
+
+That shape is deliberate: the epoch is a feature vector and `epoch.label` is
+its target, which is exactly what a supervised classifier consumes. Emitting
+individual epochs rather than a running average is the same choice — an
+averaged evoked response is one thing you can build from these, a training set
+is another, and neither belongs inside the segmentation step.
+
+| Parameter | Default | Does |
+|---|---|---|
+| `pre` / `post` | `0.2` / `0.8` | Seconds of signal kept either side of the marker |
+| `baseline` | `"mean"` | Subtract the pre-marker mean per channel |
+| `overlap` | `"ignore"` | Whether a marker may open an epoch while one is filling |
+| `labels` | all | Only epoch these marker labels |
+| `markerLag` | `2` | How late, in seconds, a marker may arrive after its signal |
+
+`markerLag` is the one worth knowing about: it sets how much signal is retained
+beyond the window itself, and so how far back a late marker can still reach. A
+headset buffering over BLE while an experiment marks trials against the wall
+clock is the case it exists for. A marker whose pre-window predates the buffer
+is dropped rather than emitted short, so every epoch is the same length and a
+set of them stays comparable; the node counts those in `dropped`.
+
+Output necessarily lags the marker by `post` seconds — the signal has to arrive
+before it can be cut.
 
 ## Record and replay
 
