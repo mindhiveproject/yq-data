@@ -14,6 +14,8 @@ import {
 import { HeartRate } from "./classes/features/heart_rate";
 import { Correlation } from "./classes/multi/correlation";
 import { Difference } from "./classes/multi/difference";
+import { StreamSelection } from "./classes/routing/stream_selection";
+import { Merge } from "./classes/routing/merge";
 
 /** Constructs an analyzer from a plain parameter object. */
 export type AnalyzerFactory = (parameters: Record<string, any>) => AnyAnalyzer;
@@ -88,3 +90,5 @@ registerAnalyzer(AnalysisMethod.RMS, (p) => new RMSAnalyzer(p));
 registerAnalyzer(AnalysisMethod.HEART_RATE, (p) => new HeartRate(p));
 registerAnalyzer(AnalysisMethod.CONNECTIVITY, (p) => new Correlation(p));
 registerAnalyzer("difference", (p) => new Difference(p));
+registerAnalyzer(AnalysisMethod.STREAM_SELECTION, (p) => new StreamSelection(p));
+registerAnalyzer(AnalysisMethod.MERGE, (p) => new Merge(p));

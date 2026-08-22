@@ -264,6 +264,10 @@ export enum AnalysisMethod {
   EPOCHING = "epoching",
   WINDOWING = "windowing",
 
+  // Routing — structure of the graph rather than of the signal
+  STREAM_SELECTION = "stream_selection",
+  MERGE = "merge",
+
   // Transformation
   FFT = "fft",
   PSD = "psd",

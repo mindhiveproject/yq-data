@@ -201,7 +201,16 @@ Python script that does this. Any relay emitting the same message shape works
 message for a stream — so an existing bridge can be pointed at this instead.
 
 One relay commonly carries several devices; each LSL stream becomes its own
-yq-data stream, keyed by `source_id`.
+yq-data stream, keyed by `source_id`. Use `StreamSelection` to pull individual
+streams off that shared wire — see [routing](#routing-splitting-and-joining-wires).
+
+An LSL stream of type `Markers` becomes exactly the same shape a
+`MarkerReceiver` produces: `valueType: "categorical"`, no sampling rate, one
+label per sample with a numeric code assigned per distinct label. LSL marker
+outlets declare a string channel format, which is the one format ordinary
+streams reject, so markers are the deliberate exception to that rule. An
+experiment marking trials from PsychoPy over LSL is indistinguishable
+downstream from one calling `mark()` in the page.
 
 ## Pipelines
 
@@ -303,6 +312,8 @@ length a visible property of the pipeline. Anything spectral needs one upstream.
 | `HEART_RATE` | `HeartRate` | BPM from a pulse waveform, plus HRV |
 | `CONNECTIVITY` | `Correlation` | Correlation between two streams |
 | `difference` | `Difference` | Element-wise comparison — facial synchrony |
+| `STREAM_SELECTION` | `StreamSelection` | Passes some streams off a shared wire, drops the rest |
+| `MERGE` | `Merge` | Joins several streams into one multi-channel stream |
 
 Register your own with `registerAnalyzer(method, factory)`; built-in and custom
 nodes execute through the same evaluator.
@@ -312,6 +323,45 @@ nodes execute through the same evaluator.
 inter-beat interval. Its `spectral` strategy skips detection entirely and takes
 the dominant frequency of the pulse band, which is steadier on camera-derived
 rPPG but reports no variability.
+
+### Routing: splitting and joining wires
+
+A source node that names no `stream` forwards **everything** its receiver
+produces — a Muse puts EEG, PPG and motion on one wire; an LSL relay puts the
+whole lab on one. `StreamSelection` pulls those apart again downstream, and
+`Merge` joins wires back together:
+
+```ts
+nodes: [
+  { id: "device", receiver: "muse" },                                  // everything
+  { id: "eeg",    method: AnalysisMethod.STREAM_SELECTION,
+    parameters: { modalities: [Modality.EEG] } },
+  { id: "pulse",  method: AnalysisMethod.STREAM_SELECTION,
+    parameters: { modalities: [Modality.PPG] } },
+  { id: "bundle", method: AnalysisMethod.MERGE, parameters: { inputs: 2 } },
+]
+```
+
+Naming a `stream` on the source node does the same job, but resolves at wire
+time and so only works once the receiver has connected. Filtering downstream is
+connect-order safe.
+
+`StreamSelection` matches on `streams` (a full stream ID exactly, anything else
+as a case-insensitive fragment), on `modalities`, or both, and `invert: true`
+passes everything that does *not* match. **Packets pass through untouched** —
+this is the only node that does not restamp what it forwards, because a router
+that renamed the thing it routed would destroy the identity the rest of the
+graph addresses it by. It is also the only node that accepts a categorical
+stream: routing is not interpretation, so splitting markers off a shared wire
+is safe in a way that averaging them is not.
+
+`Merge` concatenates channels in port order across `inputs` ports named `a`,
+`b`, `c`, … Channel labels are prefixed with their source stream only where
+they would otherwise collide. The merged stream declares a sampling rate only
+if every input agrees on one, and a modality only if every input shares it —
+both absences are load-bearing, since a merged stream with no rate is correctly
+refused by every rate-dependent node downstream rather than being filtered at a
+rate that describes none of its channels.
 
 ### Multi-input nodes
 
@@ -327,7 +377,10 @@ edges: [
 
 Ports pair by `syncPolicy`: `"latest"` (default) emits on every packet using the
 last value seen on each other port; `"timestamp"` waits until every port has a
-packet within `tolerance` ms — appropriate only for sources that share a clock.
+packet within `tolerance` ms — appropriate only for sources that share a clock;
+`"nearest"` keeps a short history per port and pairs against the packet closest
+in time, for transports that buffer by different amounts — a BLE headset
+alongside a webcam.
 
 ## Record and replay
 

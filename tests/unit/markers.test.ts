@@ -150,8 +150,13 @@ describe("compatibility", () => {
     );
   });
 
-  it("leaves no method that will accept a marker stream", () => {
-    expect(compatibleMethods(markerMeta(), registeredMethods())).toEqual([]);
+  it("leaves routing as the only thing a marker stream may feed", () => {
+    // Routing is not interpretation — splitting markers off a shared wire
+    // never does arithmetic on a marker code. Every analyzing node still
+    // refuses them.
+    expect(compatibleMethods(markerMeta(), registeredMethods())).toEqual([
+      AnalysisMethod.STREAM_SELECTION,
+    ]);
   });
 
   it("still accepts an ordinary sampled stream", () => {
@@ -263,7 +268,7 @@ describe("Pipeline validation", () => {
     // Checked once, on the first packet — not per marker.
     expect(errors).toHaveLength(1);
     expect(String((errors[0].error as Error).message)).toMatch(
-      /cannot accept input on port/
+      /cannot accept stream .* on port/
     );
   });
 

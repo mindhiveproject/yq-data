@@ -53,7 +53,8 @@ interface LSLStreamInfo {
 interface LSLMessage {
   [streamKey: string]: {
     info?: LSLStreamInfo;
-    timeseries?: number[];
+    /** Numbers for an ordinary stream; strings for a marker stream. */
+    timeseries?: Array<number | string | Array<number | string>>;
     timestamp?: number;
   };
 }
@@ -72,6 +73,27 @@ interface RegisteredStream {
   name: string;
   deviceID: string;
   channelCount: number;
+  /** Marker stream: samples are labels, and `codes` maps them to numbers. */
+  categorical: boolean;
+  /** Label to numeric code, mutated in place and shared into the metadata. */
+  codes?: Record<string, number>;
+}
+
+/**
+ * Flattens an LSL marker payload into one label per sample.
+ *
+ * Relays present markers either as a flat list of samples or as a list of
+ * one-element channel arrays, and the values may already be numbers if the
+ * stream was declared with a numeric format. All of it collapses to strings.
+ */
+function markerLabelsFrom(timeseries: unknown[]): string[] {
+  const labels: string[] = [];
+  for (const sample of timeseries) {
+    const value = Array.isArray(sample) ? sample[0] : sample;
+    if (value === undefined || value === null) continue;
+    labels.push(String(value));
+  }
+  return labels;
 }
 
 /**
@@ -200,36 +222,64 @@ export class LSLReceiver extends BaseReceiver {
       if (!Array.isArray(entry.timeseries)) continue;
 
       const stream = this.registered.get(streamKey)!;
+      const identifier = {
+        modality: stream.modality,
+        processingStage: ProcessingStage.RAW,
+        name: stream.name,
+        deviceID: stream.deviceID,
+      };
+      // LSL timestamps are seconds in the sender's clock domain.
+      const deviceTime =
+        entry.timestamp !== undefined ? entry.timestamp * 1000 : undefined;
+
+      if (stream.categorical) {
+        const labels = markerLabelsFrom(entry.timeseries);
+        if (labels.length === 0) continue;
+        this.update(
+          identifier,
+          labels.map((label) => this.codeFor(stream, label)),
+          deviceTime,
+          { labels }
+        );
+        continue;
+      }
+
+      // Non-categorical streams passed the numeric-format guard at
+      // registration, so the payload is numbers however the union is typed.
       this.update(
-        {
-          modality: stream.modality,
-          processingStage: ProcessingStage.RAW,
-          name: stream.name,
-          deviceID: stream.deviceID,
-        },
-        entry.timeseries,
-        // LSL timestamps are seconds in the sender's clock domain.
-        entry.timestamp !== undefined ? entry.timestamp * 1000 : undefined
+        identifier,
+        entry.timeseries as ArrayLike<number> | ArrayLike<number>[],
+        deviceTime
       );
     }
   }
 
   private register(streamKey: string, info: LSLStreamInfo): void {
+    const modality = modalityFor(info.type);
+
+    // A marker stream is categorical whatever format it declares. LSL markers
+    // are conventionally strings, which is precisely the format the numeric
+    // guard below rejects — so the check has to come after this, or the one
+    // stream type an experiment most needs would be dropped on arrival.
+    const categorical = modality === Modality.EVENT_MARKER;
+
     const format = info.channel_format;
-    if (format !== undefined && !NUMERIC_FORMATS.has(format)) {
+    if (!categorical && format !== undefined && !NUMERIC_FORMATS.has(format)) {
       console.warn(
         `LSL stream "${streamKey}" uses a non-numeric channel format (${format}) and cannot be streamed as packets.`
       );
       return;
     }
 
-    const channelCount = info.channel_count ?? 1;
-    const modality = modalityFor(info.type);
+    // Markers carry one label per sample, so the stream is single-channel
+    // however many channels the relay announces.
+    const channelCount = categorical ? 1 : info.channel_count ?? 1;
     const name = (info.name ?? streamKey).replace(/:/g, "_");
     const deviceID = (info.source_id || info.name || streamKey).replace(
       /:/g,
       "_"
     );
+    const codes: Record<string, number> | undefined = categorical ? {} : undefined;
 
     const streamID = this.initializeStream({
       modality,
@@ -237,10 +287,20 @@ export class LSLReceiver extends BaseReceiver {
       name,
       deviceID,
       additionalMetadata: {
-        samplingRate: info.nominal_srate || undefined,
+        // A marker stream declares no rate even when the relay reports one:
+        // the absence is what keeps rate-dependent nodes off it, and an
+        // irregular stream that claims a nominal rate is simply wrong.
+        samplingRate: categorical ? undefined : info.nominal_srate || undefined,
+        ...(categorical ? { valueType: "categorical" as const } : {}),
         channelCount,
-        channelInfo: channelInfoFrom(info, channelCount),
-        additionalMetadata: { lsl: info, streamKey },
+        channelInfo: categorical
+          ? [{ index: 0, label: name || "marker" }]
+          : channelInfoFrom(info, channelCount),
+        additionalMetadata: {
+          lsl: info,
+          streamKey,
+          ...(codes ? { markerCodes: codes } : {}),
+        },
       },
     });
 
@@ -252,7 +312,22 @@ export class LSLReceiver extends BaseReceiver {
       name,
       deviceID,
       channelCount,
+      categorical,
+      codes,
     });
+  }
+
+  /**
+   * Numeric code for a marker label, assigned on first sight.
+   *
+   * Matches `MarkerReceiver`: the table is shared into the stream's metadata,
+   * so an exported recording explains its own codes without the experiment
+   * having had to declare them up front.
+   */
+  private codeFor(stream: RegisteredStream, label: string): number {
+    const codes = stream.codes!;
+    if (!(label in codes)) codes[label] = Object.keys(codes).length + 1;
+    return codes[label];
   }
 
   public startStream(): void {

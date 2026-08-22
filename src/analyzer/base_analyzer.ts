@@ -58,8 +58,18 @@ export interface EmitOptions {
   name?: string;
   /** Channel labels of the output, when the analyzer changes them. */
   channelInfo?: ChannelInfo[];
-  /** Output rate in Hz, when the analyzer resamples. */
-  samplingRate?: number;
+  /**
+   * Output rate in Hz, when the analyzer resamples.
+   *
+   * Left undefined the input's rate carries through, which is what a node that
+   * preserves cadence wants. Pass `null` to state that the output has no
+   * meaningful rate — merging streams that disagree about theirs, or any node
+   * turning a regular signal into an irregular one. The distinction matters
+   * because an inherited rate that describes none of the output's channels
+   * would let rate-dependent nodes downstream accept a stream they cannot
+   * interpret.
+   */
+  samplingRate?: number | null;
   /** Explicit channel count, when there is no channel info to infer it from. */
   channelCount?: number;
   /** Metadata merged into `additionalMetadata` on the output. */
@@ -173,10 +183,15 @@ export abstract class AbstractAnalyzer {
       // up describing its own output instead of its input's.
       valueType: options.labels !== undefined ? "categorical" : "numeric",
       ...(channelInfo ? { channelInfo } : {}),
-      ...(options.samplingRate !== undefined
-        ? { samplingRate: options.samplingRate }
-        : {}),
     };
+
+    // Assigned after the spread rather than within it, because clearing an
+    // inherited rate is not something a spread can express.
+    if (options.samplingRate === null) {
+      delete metadata.samplingRate;
+    } else if (options.samplingRate !== undefined) {
+      metadata.samplingRate = options.samplingRate;
+    }
 
     const packet: DataPacket<Out> = {
       streamID,
