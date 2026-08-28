@@ -3,9 +3,10 @@ import {
   DataPacket,
   Modality,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
-import { isValidStreamID } from "../../../utility";
+import { Accepts, BaseAnalyzer, StreamRouter } from "../../base_analyzer";
+import { StreamFilter, matchesStreamFilter } from "../../../utility";
 
 export interface StreamSelectionParameters {
   /**
@@ -14,8 +15,8 @@ export interface StreamSelectionParameters {
    * An entry that is a well-formed stream ID (`muse-1:eeg:raw`) must match
    * exactly; anything else is treated as a case-insensitive fragment, so
    * `"eeg"` passes every EEG stream on the wire and `"muse-1"` passes
-   * everything from one device. {@link isValidStreamID} draws the line, which
-   * is the same rule the receivers use to tell an ID from a bare modality.
+   * everything from one device. `isValidStreamID` draws the line, which is the
+   * same rule the receivers use to tell an ID from a bare modality.
    */
   streams?: string[];
   /** Modalities to pass. */
@@ -61,7 +62,7 @@ export interface StreamSelectionParameters {
  * or bound separately never does arithmetic on a marker code, which is the
  * thing every other node is kept away from them to prevent.
  */
-export class StreamSelection extends BaseAnalyzer {
+export class StreamSelection extends BaseAnalyzer implements StreamRouter {
   readonly name = "StreamSelection";
   readonly method = AnalysisMethod.STREAM_SELECTION;
 
@@ -86,37 +87,18 @@ export class StreamSelection extends BaseAnalyzer {
    */
   readonly accepts: Accepts = { valueTypes: ["numeric", "categorical"] };
 
-  /** Whether a stream satisfies any of the configured criteria. */
-  private matches(packet: DataPacket): boolean {
-    const streams: string[] | undefined = this.parameters.streams;
-    const modalities: Modality[] | undefined = this.parameters.modalities;
-
-    // Unconfigured, this node is the identity. A UI that adds the node before
-    // anyone has picked a stream should show every packet flowing, not none.
-    const configured =
-      (streams && streams.length > 0) || (modalities && modalities.length > 0);
-    if (!configured) return true;
-
-    if (modalities && modalities.includes(packet.metadata.modality)) return true;
-
-    if (streams) {
-      const id = packet.streamID;
-      const lowered = id.toLowerCase();
-      for (const entry of streams) {
-        if (isValidStreamID(entry)) {
-          if (entry === id) return true;
-        } else if (lowered.includes(entry.toLowerCase())) {
-          return true;
-        }
-      }
-    }
-
-    return false;
+  /**
+   * Whether a stream reaches this node's output.
+   *
+   * Answered from metadata alone, so the pipeline can ask it of a device that
+   * has only announced its streams — which is what makes the edge downstream
+   * of a selector checkable before any data flows.
+   */
+  public passes(meta: StreamMetadata): boolean {
+    return matchesStreamFilter(meta, this.parameters as StreamFilter);
   }
 
   analyze(packet: DataPacket): DataPacket | null {
-    const matched = this.matches(packet);
-    const pass = this.parameters.invert ? !matched : matched;
-    return pass ? packet : null;
+    return this.passes(packet.metadata) ? packet : null;
   }
 }

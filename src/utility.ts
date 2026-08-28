@@ -42,6 +42,83 @@ export function isValidStreamID(id: string): id is StreamIdentifierLiteral {
   );
 }
 
+/** Whether a string names one of the known modalities. */
+export function isModality(value: string): value is Modality {
+  return (Object.values(Modality) as string[]).includes(value);
+}
+
+/**
+ * A rule for selecting streams by identity or by modality.
+ *
+ * The single definition of the selection vocabulary, read by the
+ * `stream_selection` node, by a source node's `stream` shortcut, and by the
+ * graph validator — so all three answer "does this stream match?" identically.
+ *
+ * It reads {@link StreamMetadata} rather than a packet, which is what lets the
+ * same rule be applied before any data flows: a receiver publishes metadata at
+ * `initializeStream()`, so a stored graph can be checked against a device that
+ * has done nothing but announce itself.
+ */
+export interface StreamFilter {
+  /**
+   * Stream IDs to pass. A well-formed stream ID (`muse-1:eeg:raw`) must match
+   * exactly; anything else is treated as a case-insensitive fragment, so
+   * `"muse-1"` passes everything from one device.
+   */
+  streams?: string[];
+  /** Modalities to pass. */
+  modalities?: Modality[];
+  /** Pass everything that does *not* match instead. */
+  invert?: boolean;
+}
+
+/** Whether a stream satisfies a filter's criteria, before `invert` is applied. */
+function matchesCriteria(meta: StreamMetadata, filter: StreamFilter): boolean {
+  const { streams, modalities } = filter;
+
+  // Unconfigured, a filter is the identity. A UI that adds a selector before
+  // anyone has picked a stream should show every packet flowing, not none.
+  const configured =
+    (streams && streams.length > 0) || (modalities && modalities.length > 0);
+  if (!configured) return true;
+
+  if (modalities && modalities.includes(meta.modality)) return true;
+
+  if (streams) {
+    const lowered = meta.streamID.toLowerCase();
+    for (const entry of streams) {
+      if (isValidStreamID(entry)) {
+        if (entry === meta.streamID) return true;
+      } else if (lowered.includes(entry.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/** Whether a stream passes a filter. */
+export function matchesStreamFilter(
+  meta: StreamMetadata,
+  filter: StreamFilter
+): boolean {
+  const matched = matchesCriteria(meta, filter);
+  return filter.invert ? !matched : matched;
+}
+
+/**
+ * The filter meant by a source node's `stream` shortcut.
+ *
+ * A bare modality selects by modality rather than by fragment, so naming `eeg`
+ * cannot also pull in a device whose name happens to contain "eeg".
+ */
+export function streamFilterFor(
+  stream: StreamIdentifierLiteral | Modality
+): StreamFilter {
+  return isModality(stream) ? { modalities: [stream] } : { streams: [stream] };
+}
+
 /**
  * Converts a string representation of a stream ID into a StreamIdentifier object.
  *

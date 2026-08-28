@@ -109,6 +109,7 @@ A receiver owns a connection to one source and publishes packets.
 | `MarkerReceiver` | Your own code | Timed [event markers](#event-markers); no device to connect |
 | `VoiceEmotionReceiver` | Microphone | 4 speech emotion probabilities, per phrase |
 | `FileReplayReceiver` | A recording | No hardware, no permissions, no network |
+| `RemoteStreamReceiver` | Another context | Streams sent in over a `Transport` — a tab, a worker, a server |
 
 ```ts
 import { MuseReceiver } from "yq-data";
@@ -283,11 +284,28 @@ pipeline.validate();
 //   - "power" port "in": stream "markers:event_marker:raw" carries labels ...
 ```
 
-Validation only judges what is knowable: an analyzer's output metadata is
-unknown until it has emitted once, so edges downstream of a silent analyzer are
-checked at runtime instead, on the first packet through each port. A port that
-fails there is dropped and reported through `onError` — one bad edge should not
-take down the streams that are working.
+Because a source can put several streams on one wire, an edge is judged on the
+set it carries rather than one stream at a time, and each issue says how much it
+costs. Nothing usable is an `"error"` — that node will never emit. Some usable
+is a `"warning"`: the graph runs on the rest, which is the ordinary shape of a
+fat wire and matches what the runtime does with it. `validate()` throws on
+errors only; read `issues()` to show warnings.
+
+```ts
+pipeline.issues();
+//=> [{ nodeId: "power", port: "in", severity: "warning",
+//      reason: '1 of 2 streams on this edge will be dropped: stream
+//               "psychopy-1:event_marker:raw" carries labels rather than ...' }]
+```
+
+Validation judges what is knowable. A transforming node's output metadata is
+unknown until it has emitted once, so edges below a silent analyzer are checked
+at runtime instead, on the first packet through each port. Routing nodes are the
+exception: `StreamSelection` forwards packets untouched, so what leaves it is
+what reached it minus what it drops, and the pipeline resolves that statically —
+which is what makes the edge on the far side of a selector exactly checkable
+before any data flows. A port that fails at runtime is dropped and reported
+through `onError`; one bad edge should not take down the streams that work.
 
 ### Windowing is explicit
 
@@ -342,9 +360,12 @@ nodes: [
 ]
 ```
 
-Naming a `stream` on the source node does the same job, but resolves at wire
-time and so only works once the receiver has connected. Filtering downstream is
-connect-order safe.
+Naming a `stream` on the source node does the same job for a single stream, and
+is sugar over the same filter: it is applied to each packet rather than resolved
+by a lookup when the receiver attaches, so it is connect-order safe and works on
+a relay that names its streams after their source devices rather than after
+itself. Reach for `StreamSelection` when you need more than one stream, an
+`invert`, or a rule that spans devices.
 
 `StreamSelection` matches on `streams` (a full stream ID exactly, anything else
 as a case-insensitive fragment), on `modalities`, or both, and `invert: true`
@@ -405,6 +426,115 @@ replay.data.subscribe(handler);   // behaves exactly like the live device
 
 Tracks recorded at different rates are advanced against one shared clock, so a
 256 Hz EEG track and a 10 Hz feature track stay aligned during playback.
+
+## Sending streams elsewhere
+
+`Recorder` writes packets to a file; `StreamTransmitter` sends them to another
+context. It takes the same input — any `Observable<DataPacket>`, so a receiver,
+a pipeline output, or several at once — plus a **transport**:
+
+```ts
+import { StreamTransmitter, WebSocketTransport } from "yq-data";
+
+const out = new StreamTransmitter(new WebSocketTransport("ws://localhost:9000"));
+out.addReceiver(muse);
+out.addSource(pipeline.getOutput("bands"));
+out.start();
+```
+
+`RemoteStreamReceiver` is the other end. Give it a transport and the streams
+arriving on it register and republish like any local device, so a graph built
+against a remote Muse is byte-for-byte the same as one built against a local
+one:
+
+```ts
+import { RemoteStreamReceiver, WebSocketTransport } from "yq-data";
+
+const remote = new RemoteStreamReceiver(new WebSocketTransport("ws://host:9000"));
+await remote.connect();
+remote.startStream();
+
+pipeline.attachReceiver("headset", remote);
+```
+
+### As pipeline nodes
+
+A transmit or remote-receive endpoint can also be a node in a `Pipeline` graph,
+so a stored `{ nodes, edges }` can say "and this branch goes out over a
+WebSocket" with no glue code. A `transmit` node is a **sink** — it consumes its
+input and ships it out, exposing no output — and a `receive` node is a source
+backed by a `RemoteStreamReceiver` the pipeline owns. The transport is a live
+object, so like a receiver it is named by key in the JSON and bound at runtime
+with `attachTransport()`:
+
+```ts
+const pipeline = new Pipeline({
+  nodes: [
+    { id: "eeg",   receiver: "muse", stream: Modality.EEG },
+    { id: "clean", method: AnalysisMethod.FILTERING, parameters: { kind: "bandpass", cutoff: [1, 45] } },
+    { id: "bands", method: AnalysisMethod.BAND_POWER },
+    { id: "cloud", transmit: { transport: "viz" } },   // sink: bands -> WebSocket
+  ],
+  edges: [
+    { from: ["eeg"],   to: ["clean"] },
+    { from: ["clean"], to: ["bands"] },
+    { from: ["bands"], to: ["cloud"] },
+  ],
+});
+
+pipeline.attachReceiver("muse", muse);
+pipeline.attachTransport("viz", new WebSocketTransport("ws://visuals:9000"));
+pipeline.start();
+```
+
+Sinks stay out of `terminalNodes`, `outputs`, `data` and `describe()`; read
+`transmitters()` for the outbound side — each sink's transport and a live
+per-stream packet count. Because a sink is just another edge target, one
+processed stream can fan out to a recorder, a visual and three transports at
+once with no special-casing. `MemoryTransport.pair()` wires a `transmit` node to
+a `receive` node in the same graph — a round-trip test, or a way to decouple two
+halves of a large patch.
+
+### Transports
+
+A `Transport` is a bidirectional channel for values — `send`, `onMessage`,
+`close` — and knows nothing about packets.
+
+| Transport | Carries | Notes |
+|---|---|---|
+| `MemoryTransport` | In-process | `MemoryTransport.pair()` — tests, and wiring a pipeline output back to a source in the same page |
+| `PostMessageTransport` | A worker or iframe | Structured clone; a `DataPacket` crosses with its `Float32Array` intact |
+| `BroadcastChannelTransport` | Same-origin contexts | Structured clone; one producer fans out to every tab on the channel name |
+| `WebSocketTransport` | A server or another machine | The only one that encodes; owns reconnection, same backoff as `LSLReceiver` |
+
+Structured-clone transports need **no codec** — the packet is the message.
+`WebSocketTransport` puts every value through a `WireCodec` (JSON by default; a
+binary codec is a drop-in replacement) and, because the far end is a different
+clock, `RemoteStreamReceiver` files an incoming `timestamp` under `deviceTime`
+rather than trusting it as local time. Override with `trustRemoteClock`.
+
+### The wire format
+
+`WebSocketTransport` sends the `yq-data/1` envelope — plain JSON, so a producer
+or consumer in another language needs no library:
+
+```jsonc
+// announces a stream; sent before its first packet, on change, and on a timer
+{ "protocol": "yq-data/1", "type": "meta", "streamID": "muse-1:eeg:raw",
+  "metadata": { /* full StreamMetadata */ } }
+
+// one chunk of interleaved samples
+{ "protocol": "yq-data/1", "type": "packet", "streamID": "muse-1:eeg:raw",
+  "timestamp": 1724716800000, "channelCount": 4, "data": [/* interleaved */],
+  "labels": ["go"] }
+```
+
+A consumer that only ever sees `packet` messages still reconstructs a usable
+stream: the packet names its own `streamID` and `channelCount`, and a
+well-formed `deviceID:modality:stage[:name]` ID carries the modality. A later
+`meta` upgrades that. Point a different decoder at `RemoteStreamReceiver`
+(`{ decode }`) to consume some other protocol — that is all `LSLReceiver`
+effectively is over `WebSocketTransport`.
 
 ## Working with the DSP directly
 

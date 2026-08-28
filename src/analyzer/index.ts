@@ -12,6 +12,7 @@ export {
   BaseAnalyzer,
   MultiInputAnalyzer,
   isMultiInput,
+  isRouter,
 } from "./base_analyzer";
 export type {
   Accepts,
@@ -19,6 +20,7 @@ export type {
   SyncPolicy,
   SyncParameters,
   EmitOptions,
+  StreamRouter,
 } from "./base_analyzer";
 
 export * from "./compatibility";

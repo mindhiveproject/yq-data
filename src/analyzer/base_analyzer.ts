@@ -355,3 +355,24 @@ export function isMultiInput(
 ): analyzer is MultiInputAnalyzer<any, any> {
   return analyzer instanceof MultiInputAnalyzer;
 }
+
+/**
+ * A node that decides which streams continue past it without altering them.
+ *
+ * Implemented by routing nodes only. What it buys is static: a transforming
+ * node's output metadata is unknown until it has emitted at least once, but a
+ * router's output is its input minus what it drops — so the pipeline can
+ * resolve what leaves a selector before any data flows, and check the edge on
+ * its far side exactly rather than giving up on it.
+ */
+export interface StreamRouter {
+  /** Whether a stream reaches this node's output. */
+  passes(meta: StreamMetadata): boolean;
+}
+
+/** Narrowing helper for nodes that route rather than transform. */
+export function isRouter(
+  analyzer: AnyAnalyzer
+): analyzer is AnyAnalyzer & StreamRouter {
+  return typeof (analyzer as Partial<StreamRouter>).passes === "function";
+}

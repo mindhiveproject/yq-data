@@ -10,6 +10,7 @@ import {
   DataPacket,
   LSLReceiver,
   Modality,
+  Pipeline,
   canConnect,
   compatibleMethods,
   registeredMethods,
@@ -180,5 +181,62 @@ describe("LSL ordinary streams", () => {
     expect(receiver.streams).toHaveLength(0);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("LSL streams in a pipeline", () => {
+  const EEG_INFO = {
+    name: "BioSemi",
+    type: "EEG",
+    channel_count: 2,
+    channel_format: 1,
+    nominal_srate: 256,
+    source_id: "biosemi-1",
+  };
+
+  it("resolves a source node's stream against IDs named for the source device", () => {
+    const receiver = relay();
+    const pipeline = new Pipeline({
+      nodes: [{ id: "eeg", receiver: "lsl", stream: Modality.EEG }],
+      edges: [],
+    });
+    pipeline.attachReceiver("lsl", receiver);
+    pipeline.start();
+
+    const seen: DataPacket[] = [];
+    pipeline.getOutput("eeg").subscribe((p) => seen.push(p));
+
+    // A relay registers each stream under its *source's* ID — "biosemi-1"
+    // here, never the receiver's own "LSL" — and only once it has been
+    // discovered. Both defeat resolving the shortcut by constructed ID.
+    send(receiver, { eeg: { info: EEG_INFO } });
+    send(receiver, { eeg: { timeseries: [1, 2, 3, 4], timestamp: 5 } });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].streamID).toBe("biosemi-1:eeg:raw:BioSemi");
+    expect(Array.from(seen[0].data)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("keeps a marker outlet off a node that cannot read it", () => {
+    const receiver = relay();
+    send(receiver, { eeg: { info: EEG_INFO } });
+    send(receiver, { trials: { info: MARKER_INFO } });
+
+    const pipeline = new Pipeline({
+      nodes: [
+        { id: "lsl", receiver: "lsl" },
+        { id: "power", method: AnalysisMethod.BAND_POWER },
+      ],
+      edges: [{ from: ["lsl"], to: ["power"] }],
+    });
+    pipeline.attachReceiver("lsl", receiver);
+
+    // The relay's two streams disagree about what band power can do with
+    // them, and the graph is judged on the set rather than on whichever
+    // stream happened to be announced first.
+    const issues = pipeline.issues();
+    expect(issues).toHaveLength(1);
+    expect(issues[0].severity).toBe("warning");
+    expect(issues[0].reason).toMatch(/1 of 2 streams on this edge/);
   });
 });

@@ -15,6 +15,7 @@ import {
   Pipeline,
   ProcessingStage,
   StreamIdentifierLiteral,
+  StreamMetadata,
   StreamSelection,
   canConnect,
 } from "../../src";
@@ -56,6 +57,49 @@ class MultiStreamReceiver extends BaseReceiver {
   disconnect(): void {}
   startStream(): void {}
   stopStream(): void {}
+
+  send(stream: StreamIdentifierLiteral, ...values: number[]): void {
+    this.streamData$.get(stream)!.next({
+      streamID: stream,
+      timestamp: 1000,
+      data: Float32Array.from(values),
+      metadata: this.streamMeta.get(stream)!,
+    });
+  }
+}
+
+/**
+ * A relay-style receiver.
+ *
+ * Two things distinguish it from a headset, and both are what the source
+ * node's `stream` shortcut has to cope with: streams are announced whenever
+ * the relay discovers them rather than at construction, and each is registered
+ * under the ID of the device it came from rather than under the relay's own.
+ */
+class RelayReceiver extends BaseReceiver {
+  deviceName = "relay";
+  modalities: Modality[] = [];
+  deviceID = "relay-1";
+
+  connect(): void {
+    this.isConnected = true;
+  }
+  disconnect(): void {}
+  startStream(): void {}
+  stopStream(): void {}
+
+  announce(
+    deviceID: string,
+    modality: Modality,
+    extra: Partial<StreamMetadata> = {}
+  ): StreamIdentifierLiteral {
+    if (!this.modalities.includes(modality)) this.modalities.push(modality);
+    return this.initializeStream({
+      modality,
+      deviceID,
+      additionalMetadata: { channelCount: 1, ...extra },
+    });
+  }
 
   send(stream: StreamIdentifierLiteral, ...values: number[]): void {
     this.streamData$.get(stream)!.next({
@@ -335,6 +379,139 @@ describe("Merge", () => {
       "d1:eeg:features:x",
       "d2:eeg:features:x",
     ]);
+  });
+});
+
+describe("A source node's stream shortcut", () => {
+  it("reaches a stream the receiver only registers after the pipeline started", () => {
+    const relay = new RelayReceiver();
+    relay.connect();
+
+    const pipeline = new Pipeline({
+      nodes: [{ id: "eeg", receiver: "relay", stream: Modality.EEG }],
+      edges: [],
+    });
+    pipeline.attachReceiver("relay", relay);
+    pipeline.start();
+
+    const seen: DataPacket[] = [];
+    pipeline.getOutput("eeg").subscribe((p) => seen.push(p));
+
+    // Announced only now, and under the source device's ID rather than the
+    // relay's. Resolving the subscription by looking a subject up at attach
+    // time missed both of those and produced a permanently silent node.
+    const eeg = relay.announce("headset-9", Modality.EEG, {
+      samplingRate: 256,
+    });
+    relay.send(eeg, 1, 2);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].streamID).toBe("headset-9:eeg:raw");
+  });
+
+  it("passes only the stream it names", () => {
+    const relay = new RelayReceiver();
+    relay.connect();
+    const eeg = relay.announce("headset-9", Modality.EEG, { samplingRate: 256 });
+    const ppg = relay.announce("headset-9", Modality.PPG, { samplingRate: 64 });
+
+    const pipeline = new Pipeline({
+      nodes: [{ id: "eeg", receiver: "relay", stream: Modality.EEG }],
+      edges: [],
+    });
+    pipeline.attachReceiver("relay", relay);
+    pipeline.start();
+
+    const seen: DataPacket[] = [];
+    pipeline.getOutput("eeg").subscribe((p) => seen.push(p));
+
+    relay.send(ppg, 9);
+    relay.send(eeg, 1);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].metadata.modality).toBe(Modality.EEG);
+  });
+});
+
+describe("Validating a graph fed by a shared wire", () => {
+  /** A relay carrying a headset and a marker outlet, as an LSL bridge does. */
+  function mixedRelay(): RelayReceiver {
+    const relay = new RelayReceiver();
+    relay.connect();
+    relay.announce("headset-9", Modality.EEG, { samplingRate: 256 });
+    relay.announce("psychopy-1", Modality.EVENT_MARKER, {
+      valueType: "categorical",
+    });
+    return relay;
+  }
+
+  it("warns rather than errors when a node can use some of what it is fed", () => {
+    const pipeline = new Pipeline({
+      nodes: [
+        { id: "relay", receiver: "relay" },
+        { id: "power", method: AnalysisMethod.BAND_POWER },
+      ],
+      edges: [{ from: ["relay"], to: ["power"] }],
+    });
+    pipeline.attachReceiver("relay", mixedRelay());
+
+    const issues = pipeline.issues();
+    expect(issues).toHaveLength(1);
+    expect(issues[0].severity).toBe("warning");
+    expect(issues[0].reason).toMatch(/1 of 2 streams on this edge/);
+
+    // The graph runs on the EEG, so refusing to start it would disagree with
+    // what the runtime actually does.
+    expect(() => pipeline.validate()).not.toThrow();
+  });
+
+  it("checks the edge on the far side of a selector exactly", () => {
+    const pipeline = new Pipeline({
+      nodes: [
+        { id: "relay", receiver: "relay" },
+        {
+          id: "eeg",
+          method: AnalysisMethod.STREAM_SELECTION,
+          parameters: { modalities: [Modality.EEG] },
+        },
+        { id: "power", method: AnalysisMethod.BAND_POWER },
+      ],
+      edges: [
+        { from: ["relay"], to: ["eeg"] },
+        { from: ["eeg"], to: ["power"] },
+      ],
+    });
+    pipeline.attachReceiver("relay", mixedRelay());
+
+    // The selector narrowed the wire to one stream, so there is nothing left
+    // to drop — and that is knowable without running the graph.
+    expect(pipeline.issues()).toEqual([]);
+  });
+
+  it("errors when a selector leaves the node nothing it can use", () => {
+    const pipeline = new Pipeline({
+      nodes: [
+        { id: "relay", receiver: "relay" },
+        {
+          id: "marks",
+          method: AnalysisMethod.STREAM_SELECTION,
+          parameters: { modalities: [Modality.EVENT_MARKER] },
+        },
+        { id: "power", method: AnalysisMethod.BAND_POWER },
+      ],
+      edges: [
+        { from: ["relay"], to: ["marks"] },
+        { from: ["marks"], to: ["power"] },
+      ],
+    });
+    pipeline.attachReceiver("relay", mixedRelay());
+
+    const issues = pipeline.issues();
+    expect(issues).toHaveLength(1);
+    expect(issues[0].nodeId).toBe("power");
+    expect(issues[0].severity).toBe("error");
+    expect(issues[0].reason).toMatch(/labels rather than measurements/);
+    expect(() => pipeline.validate()).toThrow(/compatibility problem/);
   });
 });
 

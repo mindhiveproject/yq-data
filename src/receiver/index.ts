@@ -18,6 +18,9 @@ export * from "./devices/audio";
 export * from "./devices/lsl";
 export * from "./devices/file_replay";
 
+// Generic inbound streams over a Transport (the counterpart to StreamTransmitter)
+export * from "./devices/remote";
+
 // Timed events pushed in from surrounding code (an experiment, a UI).
 export * from "./devices/marker";
 
