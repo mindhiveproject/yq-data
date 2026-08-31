@@ -1,0 +1,73 @@
+{
+  "generatedBy": {
+    "python": "3.12.9",
+    "numpy": "1.26.4",
+    "scipy": "1.12.0"
+  },
+  "reference": "numpy: sqrt(mean(x**2)); dBFS = 20*log10(rms) relative to 1.0, floor -100",
+  "cases": [
+    {
+      "signal": "sine_10hz_unit",
+      "expected": [
+        0.7071067811865476
+      ],
+      "expectedFromFloat32": [
+        0.707106779055462
+      ],
+      "expectedDbfs": [
+        -3.010299982817433
+      ]
+    },
+    {
+      "signal": "dc_offset",
+      "expected": [
+        0.5
+      ],
+      "expectedFromFloat32": [
+        0.5
+      ],
+      "expectedDbfs": [
+        -6.020599913279624
+      ]
+    },
+    {
+      "signal": "white_noise_unit",
+      "expected": [
+        0.9884870567352049
+      ],
+      "expectedFromFloat32": [
+        0.9884870572411579
+      ],
+      "expectedDbfs": [
+        -0.10058025498887177
+      ]
+    },
+    {
+      "signal": "two_tone_offset",
+      "expected": [
+        0.8916277250063502
+      ],
+      "expectedFromFloat32": [
+        0.8916277263927872
+      ],
+      "expectedDbfs": [
+        -0.9963286999291704
+      ]
+    },
+    {
+      "signal": "stereo_tones",
+      "expected": [
+        0.7071067811865476,
+        0.35355339059327356
+      ],
+      "expectedFromFloat32": [
+        0.7071067867425153,
+        0.3535533911781233
+      ],
+      "expectedDbfs": [
+        -3.0102998883919554,
+        -9.0308998555512
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# pip alternative to environment.yml, for regenerating the golden fixtures.
+#   pip install -r tests/unit/golden/requirements.txt
+#   python tests/unit/golden/generate.py
+numpy~=2.1
+scipy~=1.14

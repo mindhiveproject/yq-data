@@ -1,0 +1,15 @@
+# Conda environment for regenerating the golden-value fixtures.
+#
+#   conda env create -f tests/unit/golden/environment.yml
+#   conda activate yq-golden
+#   python tests/unit/golden/generate.py
+#
+# scipy is here now so the environment is ready for the next methods (Welch PSD,
+# filtering, ...). mne will be added when the first EEG-specific method needs it.
+name: yq-golden
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy=2.1
+  - scipy=1.14

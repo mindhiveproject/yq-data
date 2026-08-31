@@ -6,3 +6,5 @@
 
 # Build files
 /dist
+# Python bytecode from the golden-value generator
+/tests/unit/golden/__pycache__/
