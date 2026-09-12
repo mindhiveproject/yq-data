@@ -427,6 +427,48 @@ replay.data.subscribe(handler);   // behaves exactly like the live device
 Tracks recorded at different rates are advanced against one shared clock, so a
 256 Hz EEG track and a 10 Hz feature track stay aligned during playback.
 
+### Recording a pipeline
+
+`Recorder` takes any `Observable<DataPacket>`, so it captures pipeline outputs
+the same way it captures a device — `getOutput` works on **any** non-sink node,
+intermediate or terminal, so you can tap wherever you want:
+
+```ts
+const recorder = new Recorder();
+recorder.addReceiver(muse);                       // raw device, for replay
+recorder.addSource(pipeline.getOutput("bands"));  // + a processed branch
+recorder.start();
+```
+
+Recording is deliberately **not** a node and not wired into the graph's
+execution — it is a side channel you start and stop by hand, and it can just as
+well be attached after the fact. What the graph *can* carry is the selection:
+an optional, passive `record` block naming the tap points a session captured,
+so a stored `{ nodes, edges }` remembers them.
+
+```ts
+const pipeline = new Pipeline({
+  nodes: [ /* ... */ ],
+  edges: [ /* ... */ ],
+  record: {
+    nodes: ["eeg", "bands"],
+    options: { includeTimestamps: true },   // forwarded to the Recorder
+  },
+});
+
+const recorder = new Recorder(pipeline.recordOptions);
+for (const source of pipeline.recordTargets().values()) recorder.addSource(source);
+recorder.start();
+```
+
+The pipeline never acts on `record`: it builds no `Recorder`, and the named
+nodes stay ordinary outputs. `recordTargets()` resolves the ids to observables,
+skipping any that no longer name a readable node; `issues()` reports those as
+**warnings**, never errors, so a selection stored against an older graph
+degrades visibly instead of blocking `validate()`. The shape is intentionally
+minimal — a node editor that wants per-tap settings can widen it later without
+the runtime needing to care.
+
 ## Sending streams elsewhere
 
 `Recorder` writes packets to a file; `StreamTransmitter` sends them to another

@@ -14,6 +14,7 @@ import {
   StreamTransmitter,
   StreamTransmitterOptions,
 } from "../transmit/stream_transmitter";
+import type { RecorderOptions } from "../recorder/recorder";
 import { Transport } from "../transport/transport";
 import {
   AnyAnalyzer,
@@ -106,9 +107,35 @@ export interface PipelineEdge {
   to: [string] | [string, string];
 }
 
+/**
+ * Nodes whose output a session records, carried in the graph so a stored
+ * pipeline remembers what was being captured.
+ *
+ * This is **metadata only** — the pipeline never acts on it. It stands up no
+ * `Recorder`, changes nothing about how the graph runs, and leaves the named
+ * nodes as ordinary outputs. Recording stays external and imperative: build a
+ * `Recorder` yourself and feed it {@link Pipeline.recordTargets}, which
+ * resolves these ids to observables. {@link Pipeline.issues} checks that the
+ * ids still name readable nodes so a selection stored against an older graph
+ * degrades visibly rather than silently.
+ *
+ * The shape is deliberately small; a node editor that wants per-tap settings
+ * can widen it later without the runtime needing to care.
+ */
+export interface PipelineRecord {
+  /** Ids of the nodes to record. Source or analyzer nodes, never `transmit` sinks. */
+  nodes: string[];
+  /** Options a consumer forwards to the `Recorder` it builds from this. */
+  options?: RecorderOptions;
+}
+
 export interface PipelineGraph {
   nodes: PipelineNode[];
   edges: PipelineEdge[];
+  /**
+   * Optional recording selection. Passive metadata — see {@link PipelineRecord}.
+   */
+  record?: PipelineRecord;
 }
 
 export interface PipelineOptions {
@@ -916,6 +943,26 @@ export class Pipeline {
       }
     }
 
+    // `graph.record` is passive, so a stale id here never stops the graph
+    // running — it is a warning the recording selection has drifted, for an
+    // editor to surface, not an error that blocks `validate()`.
+    for (const id of this.graph.record?.nodes ?? []) {
+      const runtime = this.nodes.get(id);
+      if (!runtime) {
+        found.push({
+          nodeId: id,
+          severity: "warning",
+          reason: `graph.record names "${id}", which is not a node in this graph`,
+        });
+      } else if (runtime.definition.transmit) {
+        found.push({
+          nodeId: id,
+          severity: "warning",
+          reason: `graph.record names "${id}", a transmit sink with no output to record`,
+        });
+      }
+    }
+
     return found;
   }
 
@@ -1124,6 +1171,39 @@ export class Pipeline {
   public get data(): Observable<DataPacket> {
     const outputs = this.terminalNodes.map((id) => this.getOutput(id));
     return outputs.length > 0 ? merge(...outputs) : new Subject<DataPacket>();
+  }
+
+  /**
+   * The outputs named by `graph.record`, keyed by node id, ready to hand to a
+   * `Recorder`.
+   *
+   * The pipeline records nothing itself — `graph.record` is a stored selection
+   * of tap points, and this resolves it:
+   *
+   * ```ts
+   * const recorder = new Recorder(pipeline.recordOptions);
+   * for (const source of pipeline.recordTargets().values()) recorder.addSource(source);
+   * recorder.start();
+   * ```
+   *
+   * Ids that no longer name a readable node — renamed, deleted, or turned into
+   * a transmit sink since the graph was stored — are left out, and
+   * {@link issues} reports them as warnings, so a stale selection degrades
+   * rather than throws. Any non-sink node qualifies, not just terminal ones.
+   */
+  public recordTargets(): Map<string, Observable<DataPacket>> {
+    const map = new Map<string, Observable<DataPacket>>();
+    for (const id of this.graph.record?.nodes ?? []) {
+      const runtime = this.nodes.get(id);
+      if (!runtime || runtime.definition.transmit) continue;
+      map.set(id, runtime.output$.asObservable());
+    }
+    return map;
+  }
+
+  /** Recorder options carried in `graph.record`, if the graph set any. */
+  public get recordOptions(): RecorderOptions | undefined {
+    return this.graph.record?.options;
   }
 
   /** Most recent output metadata for a node, once it has emitted at least once. */
