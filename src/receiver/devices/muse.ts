@@ -69,6 +69,8 @@ export class MuseReceiver extends BaseReceiver {
   private _eegData = new Subject<EEGReading>();
   private _ppgData = new Subject<PPGReading>();
   private streamSubscriptions: Subscription[] = [];
+  // muse-js bundles its own rxjs, so its Subscription type is not ours.
+  private readingSubscriptions: { unsubscribe(): void }[] = [];
 
   /** 4 electrodes, or 5 when the auxiliary channel is enabled. */
   private eegChannelCount = 4;
@@ -95,10 +97,11 @@ export class MuseReceiver extends BaseReceiver {
       return;
     }
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       // Create a promise that rejects after the specified timeout
-      const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(() => {
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        timer = setTimeout(() => {
           reject(
             new Error(
               `Muse connection timed out after ${
@@ -106,13 +109,15 @@ export class MuseReceiver extends BaseReceiver {
               } seconds.`
             )
           );
-        }, timeoutDuration)
-      );
+        }, timeoutDuration);
+      });
       await Promise.race([this.muse.connect(), timeoutPromise]);
     } catch (error) {
       console.error("Failed to connect to Muse device:", error);
       this.isConnected$.next(false);
       throw error;
+    } finally {
+      clearTimeout(timer);
     }
 
     if (this.muse.deviceName) {
@@ -120,17 +125,27 @@ export class MuseReceiver extends BaseReceiver {
     }
 
     this.additionalInfo = await this.muse.deviceInfo();
-    this.muse.eegReadings.subscribe(this._eegData);
+
+    // Forward values only: muse-js completes its readings on disconnect, and
+    // passing that completion on would close these subjects for good.
+    // A headset that dropped on its own never ran disconnect(), so clear here.
+    this.readingSubscriptions.forEach((s) => s.unsubscribe());
+    this.readingSubscriptions = [];
+    this.readingSubscriptions.push(
+      this.muse.eegReadings.subscribe((reading) => this._eegData.next(reading))
+    );
 
     if (this.muse.enablePpg) {
-      this.muse.ppgReadings.subscribe(this._ppgData);
+      this.readingSubscriptions.push(
+        this.muse.ppgReadings.subscribe((reading) => this._ppgData.next(reading))
+      );
     }
 
     // muse-js publishes five names including AUX; only take the ones this
     // session actually streams, so channelCount matches the packet layout.
     const eegLabels = (channelNames as string[]).slice(0, this.eegChannelCount);
 
-    this.initializeStream({
+    this.ensureStream({
       modality: Modality.EEG,
       processingStage: ProcessingStage.RAW,
       additionalMetadata: {
@@ -141,7 +156,7 @@ export class MuseReceiver extends BaseReceiver {
     });
 
     if (this.muse.enablePpg) {
-      this.initializeStream({
+      this.ensureStream({
         modality: Modality.PPG,
         processingStage: ProcessingStage.RAW,
         additionalMetadata: {
@@ -159,6 +174,10 @@ export class MuseReceiver extends BaseReceiver {
     await this.muse.start();
 
     if (!this.isConnected) return;
+
+    // Subscribing again without this doubles every packet after a reconnect.
+    this.streamSubscriptions.forEach((s) => s.unsubscribe());
+    this.streamSubscriptions = [];
 
     const eegChannels = this.eegChannelCount;
 
@@ -219,6 +238,8 @@ export class MuseReceiver extends BaseReceiver {
   public async disconnect(): Promise<void> {
     this.streamSubscriptions.forEach((s) => s.unsubscribe());
     this.streamSubscriptions = [];
+    this.readingSubscriptions.forEach((s) => s.unsubscribe());
+    this.readingSubscriptions = [];
 
     if (this.isConnected) {
       this.muse.disconnect();

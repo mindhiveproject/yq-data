@@ -697,9 +697,20 @@ export class Pipeline {
     const receiver = this.receivers.get(key);
     if (!receiver) return;
 
+    let warned = false;
     for (const runtime of this.nodes.values()) {
       const definition = runtime.definition;
       if (sourceKeyOf(definition) !== key) continue;
+
+      if (!receiver.emitsPackets && !warned) {
+        warned = true;
+        console.warn(
+          `Receiver "${key}" (${receiver.deviceName}) never emits packets, so ` +
+            `source node "${definition.id}" will stay silent. Attach the receiver ` +
+            `that reads from it instead (e.g. a FaceLandmarkReceiver sharing the ` +
+            `same <video> element).`
+        );
+      }
 
       // No stream named means "everything this device produces", which is the
       // right default for a passthrough source such as a landmark receiver.

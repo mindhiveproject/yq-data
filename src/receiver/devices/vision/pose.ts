@@ -77,7 +77,6 @@ export class PoseReceiver extends VisionReceiver {
   private options: Required<
     Pick<PoseOptions, "numPoses" | "includeVisibility" | "worldCoordinates">
   >;
-  private registered = new Set<string>();
 
   constructor(videoElement: HTMLVideoElement, options: PoseOptions = {}) {
     super(videoElement, options);
@@ -120,7 +119,6 @@ export class PoseReceiver extends VisionReceiver {
   protected closeTask(): void {
     this.landmarker?.close?.();
     this.landmarker = undefined;
-    this.registered.clear();
   }
 
   private streamName(pose: number): string {
@@ -129,8 +127,6 @@ export class PoseReceiver extends VisionReceiver {
 
   private registerStream(pose: number): void {
     const name = this.streamName(pose);
-    if (this.registered.has(name)) return;
-
     const components = this.components;
     const channelInfo = [];
     let index = 0;
@@ -140,7 +136,7 @@ export class PoseReceiver extends VisionReceiver {
       }
     }
 
-    this.initializeStream({
+    this.ensureStream({
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.INFERRED,
       name,
@@ -152,8 +148,6 @@ export class PoseReceiver extends VisionReceiver {
         },
       },
     });
-
-    this.registered.add(name);
   }
 
   protected processFrame(timestampMs: number): void {

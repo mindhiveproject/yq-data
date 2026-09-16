@@ -106,7 +106,7 @@ export class RPPGReceiver extends VisionReceiver {
     // rather than round-tripping it from the GPU each time.
     this.context = this.canvas.getContext("2d", { willReadFrequently: true });
 
-    this.initializeStream({
+    this.ensureStream({
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.PREPROCESSED,
       name: "rppg",

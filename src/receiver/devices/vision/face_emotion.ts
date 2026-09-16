@@ -156,8 +156,6 @@ export class FaceEmotionReceiver extends VisionReceiver {
             scoreThreshold: this.options.minConfidence,
           });
 
-    // Expression labels are fixed, so unlike the blendshape streams these can
-    // be registered up front rather than on the first result.
     for (let face = 0; face < this.options.numFaces; face++) {
       this.registerStreams(face);
     }
@@ -179,7 +177,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
   }
 
   private registerStreams(face: number): void {
-    this.initializeStream({
+    this.ensureStream({
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.INFERRED,
       name: this.nameFor("expressions", face),
@@ -190,7 +188,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
     });
 
     if (this.options.emitAgeGender) {
-      this.initializeStream({
+      this.ensureStream({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: this.nameFor("age_gender", face),

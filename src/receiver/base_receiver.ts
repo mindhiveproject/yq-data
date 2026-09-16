@@ -27,6 +27,14 @@ export interface PacketOptions {
   labels?: string[];
 }
 
+interface StreamOptions {
+  modality: Modality;
+  processingStage?: ProcessingStage;
+  name?: string;
+  deviceID?: string | number;
+  additionalMetadata?: Partial<StreamMetadata>;
+}
+
 /**
  * Base class for all data receivers.
  * This class provides a common interface and basic functionality for receiving data streams.
@@ -68,6 +76,8 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
   abstract deviceID: string | number | undefined;
   /** Optional time units the device uses, in case it keeps its own clock */
   protected timeUnits?: "ms_since_boot" | "ticks" | "iso8601" | "utc";
+  /** False for lifecycle-only handles that never publish, so a graph source bound to one stays silent. */
+  public readonly emitsPackets: boolean = true;
 
   public abstract connect(...args: any[]): void | Promise<void>;
   public abstract disconnect(...args: any[]): void | Promise<void>;
@@ -133,28 +143,37 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
    * @param name - Optional name for the stream.
    * @returns ID of the stream that was initialized
    */
-  protected initializeStream(options: {
-    modality: Modality;
-    processingStage?: ProcessingStage;
-    name?: string;
-    deviceID?: string | number;
-    additionalMetadata?: Partial<StreamMetadata>;
-  }): StreamIdentifierLiteral {
-    const streamID = streamIDToString({
-      deviceID: options?.deviceID || this.deviceID || this.deviceName,
-      modality: options.modality,
-      processingStage: options?.processingStage || ProcessingStage.RAW,
-      name: options?.name,
-    });
+  protected initializeStream(options: StreamOptions): StreamIdentifierLiteral {
+    const streamID = this.streamIDFor(options);
 
     if (this.streamData$.has(streamID))
       throw new Error(
         `Stream with ID ${streamID} already exists. Use a different name or modality.`
       );
 
-    const subject = new Subject<DataPacket<DataType>>();
-    this.streamData$.set(streamID, subject);
-    subject.subscribe(this.allData$);
+    return this.upsertStream(streamID, options);
+  }
+
+  /**
+   * Registers a stream, or reuses the existing one when a reconnect registers
+   * it again, refreshing its metadata in case the device reports differently.
+   *
+   * Reusing rather than re-creating the subject is what keeps anyone
+   * subscribed before a disconnect receiving packets after the reconnect.
+   */
+  protected ensureStream(options: StreamOptions): StreamIdentifierLiteral {
+    return this.upsertStream(this.streamIDFor(options), options);
+  }
+
+  private upsertStream(
+    streamID: StreamIdentifierLiteral,
+    options: StreamOptions
+  ): StreamIdentifierLiteral {
+    if (!this.streamData$.has(streamID)) {
+      const subject = new Subject<DataPacket<DataType>>();
+      this.streamData$.set(streamID, subject);
+      subject.subscribe(this.allData$);
+    }
 
     const additional = options.additionalMetadata ?? {};
 
@@ -177,6 +196,15 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
     this.streams$.next(this.streams);
 
     return streamID;
+  }
+
+  private streamIDFor(options: StreamOptions): StreamIdentifierLiteral {
+    return streamIDToString({
+      deviceID: options.deviceID || this.deviceID || this.deviceName,
+      modality: options.modality,
+      processingStage: options.processingStage || ProcessingStage.RAW,
+      name: options.name,
+    });
   }
 
   public getStreamID(

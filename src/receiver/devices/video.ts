@@ -28,6 +28,7 @@ export class VideoReceiver extends BaseReceiver {
   deviceName: string = "Video";
   modalities: Modality[] = [Modality.VIDEO];
   deviceID: string | number;
+  readonly emitsPackets = false;
 
   videoElement: HTMLVideoElement;
   videoStream: MediaStream | undefined;

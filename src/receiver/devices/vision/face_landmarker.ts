@@ -8,6 +8,26 @@ import {
 const DEFAULT_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
+/**
+ * The model's output order, fixed by MediaPipe's `kBlendshapeNames`
+ * (mediapipe/tasks/cc/vision/face_landmarker/face_blendshapes_graph.cc).
+ */
+export const BLENDSHAPE_NAMES = [
+  "_neutral", "browDownLeft", "browDownRight", "browInnerUp",
+  "browOuterUpLeft", "browOuterUpRight", "cheekPuff", "cheekSquintLeft",
+  "cheekSquintRight", "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft",
+  "eyeLookDownRight", "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft",
+  "eyeLookOutRight", "eyeLookUpLeft", "eyeLookUpRight", "eyeSquintLeft",
+  "eyeSquintRight", "eyeWideLeft", "eyeWideRight", "jawForward",
+  "jawLeft", "jawOpen", "jawRight", "mouthClose",
+  "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft", "mouthFrownRight",
+  "mouthFunnel", "mouthLeft", "mouthLowerDownLeft", "mouthLowerDownRight",
+  "mouthPressLeft", "mouthPressRight", "mouthPucker", "mouthRight",
+  "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+  "mouthSmileLeft", "mouthSmileRight", "mouthStretchLeft", "mouthStretchRight",
+  "mouthUpperUpLeft", "mouthUpperUpRight", "noseSneerLeft", "noseSneerRight",
+] as const;
+
 export interface FaceLandmarkOptions extends VisionAssetOptions {
   /** Faces to track. Each gets its own set of streams. */
   numFaces?: number;
@@ -39,7 +59,6 @@ export class FaceLandmarkReceiver extends VisionReceiver {
   private options: Required<
     Pick<FaceLandmarkOptions, "numFaces" | "emitLandmarks" | "emitHeadPose">
   >;
-  private blendshapeNames: string[] = [];
 
   constructor(videoElement: HTMLVideoElement, options: FaceLandmarkOptions = {}) {
     super(videoElement, options);
@@ -70,36 +89,36 @@ export class FaceLandmarkReceiver extends VisionReceiver {
       numFaces: this.options.numFaces,
     });
 
-    // Blendshape names are only known once the model has produced a result,
-    // so streams are registered lazily on the first frame.
+    for (let face = 0; face < this.options.numFaces; face++) {
+      this.registerStreams(face);
+    }
   }
 
   protected closeTask(): void {
     this.landmarker?.close?.();
     this.landmarker = undefined;
-    this.blendshapeNames = [];
   }
 
   private faceSuffix(face: number): string | undefined {
     return this.options.numFaces > 1 ? `face_${face + 1}` : undefined;
   }
 
-  private registerStreams(face: number, names: string[]): void {
+  private registerStreams(face: number): void {
     const suffix = this.faceSuffix(face);
     const nameFor = (base: string) => (suffix ? `${base}_${suffix}` : base);
 
-    this.initializeStream({
+    this.ensureStream({
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.INFERRED,
       name: nameFor("blendshapes"),
       additionalMetadata: {
         samplingRate: this.assets.maxFps,
-        channelInfo: names.map((label, index) => ({ index, label })),
+        channelInfo: BLENDSHAPE_NAMES.map((label, index) => ({ index, label })),
       },
     });
 
     if (this.options.emitHeadPose) {
-      this.initializeStream({
+      this.ensureStream({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: nameFor("head_pose"),
@@ -115,7 +134,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
     }
 
     if (this.options.emitLandmarks) {
-      this.initializeStream({
+      this.ensureStream({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: nameFor("landmarks"),
@@ -136,15 +155,6 @@ export class FaceLandmarkReceiver extends VisionReceiver {
     for (let face = 0; face < blendshapeSets.length; face++) {
       const categories = blendshapeSets[face]?.categories ?? [];
       if (categories.length === 0) continue;
-
-      if (this.blendshapeNames.length === 0) {
-        this.blendshapeNames = categories.map(
-          (c: any) => c.displayName || c.categoryName
-        );
-        for (let f = 0; f < this.options.numFaces; f++) {
-          this.registerStreams(f, this.blendshapeNames);
-        }
-      }
 
       const suffix = this.faceSuffix(face);
       const nameFor = (base: string) => (suffix ? `${base}_${suffix}` : base);

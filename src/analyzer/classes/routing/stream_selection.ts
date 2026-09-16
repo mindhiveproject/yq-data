@@ -38,9 +38,9 @@ export interface StreamSelectionParameters {
  * produces — a Muse puts EEG, PPG, accelerometer and gyroscope on one wire, an
  * LSL relay puts every stream the lab is running on one wire — and until this
  * node existed there was no way to pull them apart again downstream. Naming a
- * `stream` on the source node is the other way to do it, but it resolves the
- * stream at wire time and so only works if the receiver has already connected;
- * filtering downstream is connect-order safe.
+ * `stream` on the source node is the other way to do it, and is equally
+ * connect-order safe; this node is for splitting one wire into several
+ * branches mid-graph.
  *
  * ```ts
  * { id: "device", receiver: "muse" },                       // everything

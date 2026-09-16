@@ -565,3 +565,45 @@ describe("Merge in a pipeline", () => {
     ]);
   });
 });
+
+describe("Source wiring", () => {
+  /** Stands in for VideoReceiver: owns a device but never publishes. */
+  class SilentReceiver extends MultiStreamReceiver {
+    readonly emitsPackets = false;
+  }
+
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  it("warns once when a source node is bound to a receiver that never emits", () => {
+    const pipeline = new Pipeline({
+      nodes: [
+        { id: "a", receiver: "camera" },
+        { id: "b", receiver: "camera" },
+      ],
+      edges: [],
+    });
+
+    pipeline.attachReceiver("camera", new SilentReceiver());
+    pipeline.start();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('"camera"');
+  });
+
+  it("stays quiet when no source node names the key", () => {
+    const pipeline = new Pipeline({
+      nodes: [{ id: "device", receiver: "muse" }],
+      edges: [],
+    });
+
+    pipeline.attachReceiver("preview", new SilentReceiver());
+    pipeline.attachReceiver("muse", new MultiStreamReceiver());
+    pipeline.start();
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+});

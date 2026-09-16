@@ -191,7 +191,7 @@ export class MicrophoneReceiver extends BaseReceiver {
         },
       });
 
-      this.initializeStream({
+      this.ensureStream({
         modality: Modality.AUDIO,
         processingStage: ProcessingStage.RAW,
         additionalMetadata: {
