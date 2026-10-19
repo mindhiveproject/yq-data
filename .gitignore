@@ -12,3 +12,5 @@
 /tests/unit/golden/report/
 
 .DS_Store
+# Downloads for the golden-value generator (datasets, reference MATLAB)
+/tests/unit/golden/.cache/

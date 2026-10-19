@@ -6,8 +6,11 @@ libraries the field already trusts, and says so precisely where it does not.
 - **Conformance** references are NumPy / SciPy called with exactly the
   convention the package documents. These must match to float precision.
 - **Field-standard** references are the pipelines researchers actually use:
-  YASA for EEG band power and NeuroKit2 for PPG beats and HRV. Synthetic
-  signals carry their own **ground truth** (true beat locations, true rate).
+  YASA for EEG band power, NeuroKit2 for PPG beats and HRV, and for beat
+  detection the original MATLAB of the detectors the field benchmarks
+  (MSPTDfast and qppgfast from the ppg-beats toolbox, run under GNU Octave).
+  Synthetic signals carry their own **ground truth** (true beat locations,
+  true rate). A real PPG recording is labelled from the ECG recorded with it.
   These are judged against stated, justified tolerances.
 
 **Results** live in two places. The tests are the live record: every known gap
@@ -32,7 +35,8 @@ directory is repo-only.
 | `ref_stats.py` | Statistics, normalization, polyfit/detrend, correlation, windows. |
 | `ref_spectral.py` | Periodogram, amplitude spectrum, band power (own convention + YASA). |
 | `ref_filter.py` | Butterworth responses and coefficients, `firwin`, window functions, `lfilter`/`sosfilt` (with initial state), `filtfilt`/`sosfiltfilt` over every pad type. |
-| `ref_cardiac.py` | HRV definitions (NeuroKit2), ground-truth beats, NeuroKit2 PPG pipeline. |
+| `ref_cardiac.py` | HRV definitions (NeuroKit2), the ppg-beats MATLAB detectors (MSPTDfast v2, qppgfast) under Octave, NeuroKit2's MSPTDfast port and PPG pipeline, ECG reference beats for the real recording. |
+| `octave/` | `run_detectors.m`, the batch driver `ref_cardiac.py` calls, and a `downsample.m` shim for Octave. The toolbox files themselves are downloaded, not committed. |
 | `fixtures/_inputs.json` | The signals, serialised. **Generated, do not hand-edit.** |
 | `fixtures/<family>.json` | Reference values, one file per method family. |
 | `harness.ts` | Fixture loading, packet building, `divergence`, `recorder`. |
@@ -136,6 +140,14 @@ filter` (or `spectral`, `stats`, `cardiac`, `rms`). That also needs only that
 family's libraries (the filter fixtures need just NumPy and SciPy, not YASA or
 NeuroKit2) and leaves `_inputs.json` alone.
 
+The `cardiac` group also needs **GNU Octave** 7 or later on `PATH`
+(`brew install octave`; tested with 11.3) and network access the first time.
+`ref_cardiac.py` downloads the ppg-beats reference detectors at a pinned
+commit, and `inputs.py` downloads NeuroKit2's real recording at a pinned commit.
+Both go into `.cache/` (git-ignored) and are hash-checked. The detectors are
+not committed because qppgfast is BSD-3/GPL-2 and its helpers are GPL-3.
+Because `inputs.py` reads the recording, every run needs it once.
+
 Then review the JSON diff and commit it. Each fixture records the exact
 library versions it was produced with under `generatedBy`. Generation is
 deterministic: two runs produce byte-identical fixtures.
@@ -183,7 +195,10 @@ deterministic: two runs produce byte-identical fixtures.
 - **Python** (regeneration only): 3.12, `numpy` 2.1, `scipy` 1.14,
   `neurokit2` 0.2.13, `yasa` 0.7.0, pinned in `environment.yml` and
   `requirements.txt`. YASA pulls in MNE. Nothing calls MNE directly, because
-  YASA's `bandpower` is the EEG reference.
+  YASA's `bandpower` is the EEG reference. The fixtures record the versions
+  that actually made them (`generatedBy`). Regenerate a group with those
+  versions so its diff shows only what you changed.
+- **GNU Octave** (cardiac regeneration only): 7 or later, for `jsondecode`.
 - NumPy/SciPy pins are compatible-release (`~=`). NeuroKit2 and YASA are
   pinned exactly, because their algorithms (peak detection, Welch defaults)
   feed fixture values directly.
@@ -256,17 +271,36 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
 - Shin, H.S., Lee, C. & Lee, M. (2009). Adaptive threshold method for the peak
   detection of photoplethysmographic waveform. *Comput Biol Med*
   39(12):1145–1152. doi:10.1016/j.compbiomed.2009.10.006. The package's
-  detector.
+  previous detector, still `detector: "adaptive-threshold"`; "ATM" in
+  Charlton et al. (2022).
+- Bishop, S.M. & Ercole, A. (2018). Multi-scale peak and trough detection
+  optimised for periodic and quasi-periodic neuroscience data. *Acta
+  Neurochir Suppl* 126:189–195. doi:10.1007/978-3-319-65798-1_39. MSPTD.
+- Charlton, P.H., Mant, J. & Kyriacou, P.A. (2025). The MSPTDfast
+  photoplethysmography beat detection algorithm: design, benchmarking, and
+  open-source distribution. *Physiol Meas* 46:035002.
+  doi:10.1088/1361-6579/adb89e. The package's detector, ported from
+  `msptdfastv2_beat_detector.m` (ppg-beats, MIT) and checked against it
+  sample for sample.
+- Vest, A.N. et al. (2018). An open source benchmarked toolbox for
+  cardiovascular waveform and interval analysis. *Physiol Meas*
+  39(10):105004. doi:10.1088/1361-6579/aae021. `qppg_fast`, the source of
+  ppg-beats' qppgfast; after Zong, W. et al. (2003), An open-source algorithm
+  to detect onset of arterial blood pressure pulses, *Comput Cardiol*
+  30:259–262, doi:10.1109/CIC.2003.1291140.
 - Elgendi, M. et al. (2013). Systolic peak detection in acceleration
   photoplethysmograms measured from emergency responders in tropical
   conditions. *PLoS ONE* 8(10):e76585. doi:10.1371/journal.pone.0076585.
   NeuroKit2's default PPG detector.
 - Charlton, P.H. et al. (2022). Detecting beats in the photoplethysmogram:
   benchmarking open-source algorithms. *Physiol Meas* 43(8):085007.
-  doi:10.1088/1361-6579/ac826d. Beat-detection scoring (±150 ms, F1).
+  doi:10.1088/1361-6579/ac826d. How the detector was chosen (MSPTD and qppg
+  best of fifteen), beat-detection scoring (±150 ms, F1, ECG-PPG lag
+  alignment) and the 10% heart-rate error bar.
 - Lipponen, J.A. & Tarvainen, M.P. (2019). A robust algorithm for heart rate
   variability time series artefact correction using novel beat
-  classification. *J Med Eng Technol.* NN-interval cleaning (D7).
+  classification. *J Med Eng Technol.* NN-interval cleaning, the usual
+  remedy for the false beats behind D7 (closed by switching detector).
 - Tang, Q. et al. (2020). Synthetic photoplethysmogram generation using two
   Gaussian functions. *Sci Rep* 10:13883. doi:10.1038/s41598-020-69076-x.
   The pulse model for the synthetic PPG in `inputs.py`.

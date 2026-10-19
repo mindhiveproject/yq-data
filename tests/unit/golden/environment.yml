@@ -6,7 +6,8 @@
 #
 # numpy/scipy are the conformance references. neurokit2 (PPG/HRV) and yasa
 # (EEG band power) are the field-standard pipelines; they are pinned exactly
-# because their algorithms feed fixture values directly.
+# because their algorithms feed fixture values directly. Octave runs the
+# ppg-beats MATLAB reference detectors for the cardiac fixtures.
 name: yq-golden
 channels:
   - conda-forge
@@ -16,3 +17,4 @@ dependencies:
   - scipy=1.14
   - neurokit2=0.2.13
   - yasa=0.7.0
+  - octave>=7

@@ -11,7 +11,10 @@ import { designFilter } from "../../methods/filter_design";
 import { detrend } from "../../methods/stats";
 import { spectrum, dominantFrequency } from "../../methods/fft";
 import {
+  Peak,
   adaptiveThresholdPeaks,
+  ensureTroughBetweenPeaks,
+  msptdFast,
   rateFromPeaks,
   intervalVariability,
   rmssd,
@@ -27,6 +30,17 @@ export interface HeartRateParameters {
    * cannot report beat-to-beat timing.
    */
   strategy?: "peaks" | "spectral";
+  /**
+   * Beat detector for the `peaks` strategy.
+   *
+   * `msptdfast` (default) is MSPTDfast v2 (Charlton et al., 2025), the
+   * efficient form of MSPTD, which with qppg led the open-source PPG beat
+   * detectors benchmarked by Charlton et al. (2022). `adaptive-threshold` is
+   * Shin et al. (2009), this node's detector before MSPTDfast. It records a
+   * falling edge at the start of a window as a beat, which inflates SDNN and
+   * RMSSD.
+   */
+  detector?: "msptdfast" | "adaptive-threshold";
   /** Channel to analyze when the input has more than one. */
   channel?: number;
   minRate?: number;
@@ -53,10 +67,20 @@ export interface HeartRateParameters {
  * is the reference configuration and anything under about four will report
  * unstable rates.
  *
- * The `peaks` strategy detects beats with the adaptive-threshold method of
- * Shin, H.S., Lee, C. & Lee, M. (2009), Adaptive threshold method for the peak
- * detection of photoplethysmographic waveform, Computers in Biology and
- * Medicine, 39(12), 1145–1152, https://doi.org/10.1016/j.compbiomed.2009.10.006
+ * The `peaks` strategy detects beats with MSPTDfast v2 and drops duplicate
+ * detections that have no trough between them. The rate is then the median
+ * of the plausible inter-beat intervals. A beat within about half an
+ * interval of the window's edges is not detected, so a 10 s window yields
+ * one or two fewer intervals than it holds. It never yields a false one.
+ *
+ * Charlton, P.H. et al. (2022), Detecting beats in the photoplethysmogram:
+ * benchmarking open-source algorithms, Physiological Measurement 43(8),
+ * 085007, https://doi.org/10.1088/1361-6579/ac826d
+ *
+ * Charlton, P.H., Mant, J. & Kyriacou, P.A. (2025), The MSPTDfast
+ * photoplethysmography beat detection algorithm: design, benchmarking, and
+ * open-source distribution, Physiological Measurement 46, 035002,
+ * https://doi.org/10.1088/1361-6579/adb89e
  */
 export class HeartRate extends BaseAnalyzer {
   readonly name = "HeartRate";
@@ -68,6 +92,7 @@ export class HeartRate extends BaseAnalyzer {
   constructor(parameters: HeartRateParameters = {}) {
     super({
       strategy: "peaks",
+      detector: "msptdfast",
       channel: 0,
       minRate: 40,
       maxRate: 200,
@@ -125,10 +150,13 @@ export class HeartRate extends BaseAnalyzer {
       const { frequency } = dominantFrequency(spec, lowHz, highHz);
       estimate = frequency * 60;
     } else {
-      const { peaks } = adaptiveThresholdPeaks(pulse, {
-        samplingRate: rate,
-        refractoryPeriod: 60 / maxRate,
-      });
+      const peaks: Peak[] =
+        this.parameters.detector === "adaptive-threshold"
+          ? adaptiveThresholdPeaks(pulse, {
+              samplingRate: rate,
+              refractoryPeriod: 60 / maxRate,
+            }).peaks
+          : ensureTroughBetweenPeaks(pulse, msptdFast(pulse, rate).peaks);
       estimate = rateFromPeaks(peaks, rate, { minRate, maxRate });
       if (this.parameters.includeVariability) {
         sdnn = intervalVariability(peaks, rate);

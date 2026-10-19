@@ -100,6 +100,20 @@
       "expectedDbfsAes17": [44.61710355903751]
     },
     {
+      "signal": "ppg_real_rest_100hz",
+      "expected": [0.2008046952077369],
+      "expectedFromFloat32": [0.2008046952077379],
+      "expectedDbfs": [-13.94452273502516],
+      "expectedDbfsAes17": [-10.93422277838535]
+    },
+    {
+      "signal": "ppg_real_rest_64hz",
+      "expected": [0.20093465660073434],
+      "expectedFromFloat32": [0.20093465652867898],
+      "expectedDbfs": [-13.938903023013332],
+      "expectedDbfsAes17": [-10.928603066373519]
+    },
+    {
       "signal": "corr_a",
       "expected": [1.1831369021684124, 1.0568881399757033],
       "expectedFromFloat32": [1.1831369044516842, 1.0568881416108173],

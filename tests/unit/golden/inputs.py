@@ -18,7 +18,43 @@ Each signal past the original five draws from its own seeded generator, so
 adding or reordering signals never changes the samples of an existing one.
 """
 
+import hashlib
+import io
+import urllib.request
+from pathlib import Path
+
 import numpy as np
+
+CACHE = Path(__file__).parent / ".cache"
+
+# NeuroKit2's bundled resting recording (Makowski et al., 2021): 5 min of
+# simultaneous ECG, PPG and respiration at 100 Hz from one seated adult. The
+# file has not changed since this commit; the hash guards against that.
+BIO_RESTING_URL = (
+    "https://raw.githubusercontent.com/neuropsychology/NeuroKit/"
+    "0dd85d22bbe04cda0aaf2b2f02895286ea5ec2bd/data/bio_resting_5min_100hz.csv"
+)
+BIO_RESTING_SHA256 = "6a33ff8ae229f608354563044ff4a4d1c4e927c817e9269a4dec6173abefc385"
+
+
+def fetch(url, sha256, name):
+    """Download once into .cache/ (git-ignored) and verify the content hash."""
+    path = CACHE / name
+    if not path.exists():
+        CACHE.mkdir(exist_ok=True)
+        with urllib.request.urlopen(url) as response:
+            path.write_bytes(response.read())
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != sha256:
+        raise RuntimeError(f"{name}: sha256 {digest}, expected {sha256}")
+    return path
+
+
+def bio_resting():
+    """The NeuroKit2 resting recording as {column: float64 array}, at 100 Hz."""
+    path = fetch(BIO_RESTING_URL, BIO_RESTING_SHA256, "bio_resting_5min_100hz.csv")
+    table = np.genfromtxt(io.StringIO(path.read_text()), delimiter=",", names=True)
+    return {name: np.asarray(table[name], np.float64) for name in table.dtype.names}
 
 
 def _sine(freq, fs, n, amp=1.0, phase=0.0):
@@ -237,6 +273,29 @@ def build_signals():
             "channels": [x],
             "truth": truth,
         }
+
+    # Real PPG. The ECG recorded alongside gives the reference beats; see
+    # ref_cardiac.py. Charlton et al. (2022) label their benchmark datasets the
+    # same way, from simultaneous ECG.
+    from scipy.signal import resample_poly
+
+    bio = bio_resting()
+    signals["ppg_real_rest_100hz"] = {
+        "description": (
+            "Real finger PPG, 5 min at 100 Hz, seated adult at rest (NeuroKit2 "
+            "bio_resting_5min_100hz, recorded with simultaneous ECG)."
+        ),
+        "fs": 100.0,
+        "channels": [bio["PPG"]],
+    }
+    signals["ppg_real_rest_64hz"] = {
+        "description": (
+            "ppg_real_rest_100hz resampled to Muse's 64 Hz "
+            "(scipy.signal.resample_poly, up 16 / down 25)."
+        ),
+        "fs": 64.0,
+        "channels": [resample_poly(bio["PPG"], 16, 25)],
+    }
 
     # --- Correlation ------------------------------------------------------
 

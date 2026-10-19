@@ -336,11 +336,17 @@ length a visible property of the pipeline. Anything spectral needs one upstream.
 Register your own with `registerAnalyzer(method, factory)`; built-in and custom
 nodes execute through the same evaluator.
 
-`HeartRate` detects beats with the adaptive-threshold method of Shin, Lee & Lee
-(2009) — see [References](#references) — and derives the rate from the median
-inter-beat interval. Its `spectral` strategy skips detection entirely and takes
-the dominant frequency of the pulse band, which is steadier on camera-derived
-rPPG but reports no variability.
+`HeartRate` detects beats with MSPTDfast v2 (Charlton et al., 2025), the
+efficient form of MSPTD. MSPTD and qppg were the two best of fifteen
+open-source PPG beat detectors benchmarked by Charlton et al. (2022). The port
+matches the authors' MATLAB sample for sample. The rate is the median
+inter-beat interval in the window. A beat within about half an interval of
+the window's edges is not detected, so a 10 s window reports one or two fewer
+intervals than it holds, but never a false one. The previous detector, the
+adaptive threshold of Shin, Lee & Lee (2009), remains available as
+`detector: "adaptive-threshold"`. The node's `spectral` strategy skips detection
+entirely and takes the dominant frequency of the pulse band, which is steadier
+on camera-derived rPPG but reports no variability. See [References](#references).
 
 `BandPower` reports absolute power by default: a Hamming-windowed PSD
 integrated across each band, in µV² for EEG, as YASA, MNE and EEGLAB report
@@ -621,11 +627,26 @@ const alpha = bandAverage(spec, 8, 12);
 
 Methods:
 
+- Charlton, P.H., Mant, J. & Kyriacou, P.A. (2025). The MSPTDfast
+  photoplethysmography beat detection algorithm: design, benchmarking, and
+  open-source distribution. *Physiological Measurement*, 46, 035002.
+  [doi:10.1088/1361-6579/adb89e](https://doi.org/10.1088/1361-6579/adb89e)
+  — the beat detector behind `HEART_RATE`, ported from the MIT-licensed
+  [ppg-beats](https://github.com/peterhcharlton/ppg-beats) toolbox.
+- Bishop, S.M. & Ercole, A. (2018). Multi-scale peak and trough detection
+  optimised for periodic and quasi-periodic neuroscience data. *Acta
+  Neurochirurgica Supplement*, 126, 189–195.
+  [doi:10.1007/978-3-319-65798-1_39](https://doi.org/10.1007/978-3-319-65798-1_39)
+  — MSPTD, which MSPTDfast refines.
+- Charlton, P.H. et al. (2022). Detecting beats in the photoplethysmogram:
+  benchmarking open-source algorithms. *Physiological Measurement*, 43(8),
+  085007. [doi:10.1088/1361-6579/ac826d](https://doi.org/10.1088/1361-6579/ac826d)
+  — the benchmark the detector was chosen from.
 - Shin, H.S., Lee, C. & Lee, M. (2009). Adaptive threshold method for the peak
   detection of photoplethysmographic waveform. *Computers in Biology and
   Medicine*, 39(12), 1145–1152.
   [doi:10.1016/j.compbiomed.2009.10.006](https://doi.org/10.1016/j.compbiomed.2009.10.006)
-  — the peak detector and the 15-tap FIR lowpass behind `HEART_RATE`.
+  — `HEART_RATE`'s `detector: "adaptive-threshold"`.
 - Lugaresi, C., Tang, J., Nash, H., McClanahan, C., Uboweja, E., Hays, M.,
   Zhang, F., Chang, C.-L., Yong, M.G., Lee, J., Chang, W.-T., Hua, W., Georg, M.
   & Grundmann, M. (2019). MediaPipe: A Framework for Building Perception

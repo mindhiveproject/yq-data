@@ -7,3 +7,5 @@ scipy~=1.14
 # algorithms (peak detection, Welch defaults) feed fixture values directly.
 neurokit2==0.2.13
 yasa==0.7.0
+# The cardiac fixtures also need GNU Octave >= 7 on PATH (not a pip package):
+#   brew install octave   /   apt install octave   /   conda install -c conda-forge octave
