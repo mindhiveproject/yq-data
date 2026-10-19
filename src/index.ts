@@ -21,3 +21,6 @@ export * from "./transport";
 
 // Outbound streaming (the counterpart to Recorder)
 export * from "./transmit";
+
+// Drawing streams onto a canvas, e.g. face geometry over the video
+export * from "./draw";

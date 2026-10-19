@@ -3,6 +3,8 @@ import {
   VisionReceiver,
   VisionAssetOptions,
   DEFAULT_WASM_PATH,
+  FACE_BOX_CHANNELS,
+  pointChannels,
 } from "./base_vision";
 
 const DEFAULT_MODEL =
@@ -35,18 +37,35 @@ export interface FaceLandmarkOptions extends VisionAssetOptions {
   emitLandmarks?: boolean;
   /** Emit head yaw / pitch / roll derived from the transformation matrix. */
   emitHeadPose?: boolean;
+  /**
+   * Emit the face's bounding box, normalized to the video frame.
+   *
+   * Four channels instead of 1434, so it is the cheap way to give an overlay
+   * somewhere to anchor head-pose axes or a label — and the same layout
+   * {@link FaceEmotionReceiver} emits, so one overlay draws either.
+   */
+  emitFaceBox?: boolean;
 }
+
+/** Number of points in a Face Landmarker mesh. */
+const FACE_MESH_POINTS = 478;
 
 /**
  * Facial expression tracking via MediaPipe Face Landmarker.
  *
- * Emits up to three streams per tracked face:
+ * Emits up to four streams per tracked face:
  * - `blendshapes` — 52 expression scores in 0–1, the primary signal and the
  *   one worth binding to a visual parameter.
  * - `head_pose` — yaw, pitch and roll in degrees.
+ * - `face_box` — x, y, width, height in 0–1 of the frame. Off by default.
  * - `landmarks` — 478 points as x, y, z triples. Off by default: 1434
  *   channels at frame rate is a lot of data for something most visuals never
  *   read.
+ *
+ * `face_box` and `landmarks` are in normalized frame coordinates, so they can
+ * be drawn over the video with {@link FaceOverlay}, locally or after crossing
+ * a transport. A frame with no face publishes nothing; consumers read the
+ * silence as the face being gone.
  *
  * Lugaresi, C. et al. (2019). MediaPipe: A Framework for Building Perception
  * Pipelines. arXiv:1906.08172. https://arxiv.org/abs/1906.08172
@@ -57,7 +76,10 @@ export class FaceLandmarkReceiver extends VisionReceiver {
 
   private landmarker: any;
   private options: Required<
-    Pick<FaceLandmarkOptions, "numFaces" | "emitLandmarks" | "emitHeadPose">
+    Pick<
+      FaceLandmarkOptions,
+      "numFaces" | "emitLandmarks" | "emitHeadPose" | "emitFaceBox"
+    >
   >;
 
   constructor(videoElement: HTMLVideoElement, options: FaceLandmarkOptions = {}) {
@@ -67,6 +89,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
       numFaces: 1,
       emitLandmarks: false,
       emitHeadPose: true,
+      emitFaceBox: false,
       ...options,
     };
   }
@@ -133,12 +156,27 @@ export class FaceLandmarkReceiver extends VisionReceiver {
       });
     }
 
+    if (this.options.emitFaceBox) {
+      this.ensureStream({
+        modality: Modality.VIDEO,
+        processingStage: ProcessingStage.INFERRED,
+        name: nameFor("face_box"),
+        additionalMetadata: {
+          samplingRate: this.assets.maxFps,
+          channelInfo: FACE_BOX_CHANNELS,
+        },
+      });
+    }
+
     if (this.options.emitLandmarks) {
       this.ensureStream({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: nameFor("landmarks"),
-        additionalMetadata: { samplingRate: this.assets.maxFps },
+        additionalMetadata: {
+          samplingRate: this.assets.maxFps,
+          channelInfo: pointChannels(FACE_MESH_POINTS, ["x", "y", "z"]),
+        },
       });
     }
   }
@@ -182,8 +220,20 @@ export class FaceLandmarkReceiver extends VisionReceiver {
         }
       }
 
+      const points = results?.faceLandmarks?.[face];
+
+      if (this.options.emitFaceBox && points?.length) {
+        this.update(
+          {
+            modality: Modality.VIDEO,
+            processingStage: ProcessingStage.INFERRED,
+            name: nameFor("face_box"),
+          },
+          boxAround(points)
+        );
+      }
+
       if (this.options.emitLandmarks) {
-        const points = results?.faceLandmarks?.[face];
         if (points) {
           const flat = new Float32Array(points.length * 3);
           for (let i = 0; i < points.length; i++) {
@@ -203,6 +253,21 @@ export class FaceLandmarkReceiver extends VisionReceiver {
       }
     }
   }
+}
+
+/** Tightest box around normalized points, as [x, y, width, height]. */
+function boxAround(points: { x: number; y: number }[]): number[] {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const { x, y } of points) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return [minX, minY, maxX - minX, maxY - minY];
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   EMOTIVReceiver,
   FaceEmotionReceiver,
   FaceLandmarkReceiver,
+  FaceOverlay,
   FileReplayReceiver,
   LSLReceiver,
   MicrophoneReceiver,
@@ -221,7 +222,15 @@ let camera;
 let face;
 let faceEmotion;
 let rppg;
-const renderCamera = makeRenderer("camera-output", 5);
+let faceOverlay;
+let emotionOverlay;
+const renderCameraValues = makeRenderer("camera-output", 5);
+
+// Geometry is for the overlays; 1434 landmark channels would bury the text.
+const renderCamera = (packet) => {
+  if (/:(landmarks|face_box)(_face_\d+)?$/.test(packet.streamID)) return;
+  renderCameraValues(packet);
+};
 
 const rppgPipeline = new Pipeline({
   nodes: [
@@ -259,17 +268,37 @@ document.getElementById("camera-connect").addEventListener("click", async () => 
     await camera.startStream();
 
     // Both receivers read the same element — the camera is opened once.
-    face = new FaceLandmarkReceiver(video, { maxFps: 15 });
+    face = new FaceLandmarkReceiver(video, {
+      maxFps: 15,
+      emitFaceBox: true,
+      emitLandmarks: true,
+    });
     await face.connect();
     face.startStream();
     face.data.subscribe(renderCamera);
 
+    // Overlays draw from streams, not receivers: the same code would draw
+    // these faces from a RemoteStreamReceiver on another machine.
+    faceOverlay = new FaceOverlay(document.getElementById("face-overlay"), {
+      video,
+      layers: { box: false },
+    });
+    faceOverlay.attach(face);
+    faceOverlay.start();
+
     // A detector plus two classifier passes is heavier than the MediaPipe
     // graph above, so it gets a slower frame budget on the same feed.
-    faceEmotion = new FaceEmotionReceiver(video, { maxFps: 10 });
+    faceEmotion = new FaceEmotionReceiver(video, { maxFps: 10, emitFaceBox: true });
     await faceEmotion.connect();
     faceEmotion.startStream();
     faceEmotion.data.subscribe(renderCamera);
+
+    emotionOverlay = new FaceOverlay(document.getElementById("emotion-overlay"), {
+      video,
+      style: { color: "#ffcc33" },
+    });
+    emotionOverlay.attach(faceEmotion);
+    emotionOverlay.start();
 
     rppg = new RPPGReceiver(video, { maxFps: 30, region: "forehead" });
     await rppg.connect();
@@ -288,6 +317,8 @@ document.getElementById("camera-connect").addEventListener("click", async () => 
 
 document.getElementById("camera-disconnect").addEventListener("click", async () => {
   rppgPipeline.stop();
+  faceOverlay?.destroy();
+  emotionOverlay?.destroy();
   await face?.disconnect();
   await faceEmotion?.disconnect();
   await rppg?.disconnect();

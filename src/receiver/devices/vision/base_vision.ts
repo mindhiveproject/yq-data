@@ -1,4 +1,4 @@
-import { Modality } from "../../../data_stream.interface";
+import { ChannelInfo, Modality } from "../../../data_stream.interface";
 import { BaseReceiver } from "../../base_receiver";
 
 /** Where the MediaPipe wasm runtime and model files are fetched from. */
@@ -15,6 +15,36 @@ export interface VisionAssetOptions {
 
 export const DEFAULT_WASM_PATH =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm";
+
+/**
+ * Channel layout of a `face_box` stream: the top-left corner and size of the
+ * face in 0–1 coordinates of the video frame, x to the right and y downward.
+ */
+export const FACE_BOX_CHANNELS: ChannelInfo[] = [
+  { index: 0, label: "x" },
+  { index: 1, label: "y" },
+  { index: 2, label: "width" },
+  { index: 3, label: "height" },
+];
+
+/**
+ * Channel info for a flattened point list, labelled "0 x", "0 y", "1 x"….
+ *
+ * The labels are what tell a consumer the stride — an overlay finds where the
+ * second point's "x" starts — so 2-D and 3-D landmark streams can share code.
+ */
+export function pointChannels(
+  count: number,
+  components: string[]
+): ChannelInfo[] {
+  const channels: ChannelInfo[] = [];
+  for (let point = 0; point < count; point++) {
+    for (const component of components) {
+      channels.push({ index: channels.length, label: `${point} ${component}` });
+    }
+  }
+  return channels;
+}
 
 /**
  * Shared lifecycle for receivers that infer signals from camera frames.

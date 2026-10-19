@@ -58,7 +58,11 @@
           <button id="camera-connect">Connect camera</button>
           <button id="camera-disconnect" disabled>Disconnect</button>
         </div>
-        <video id="camera-video" autoplay muted playsinline width="320"></video>
+        <div class="camera-stage">
+          <video id="camera-video" autoplay muted playsinline width="320"></video>
+          <canvas id="face-overlay"></canvas>
+          <canvas id="emotion-overlay"></canvas>
+        </div>
         <pre class="output" id="camera-output"></pre>
       </section>
 

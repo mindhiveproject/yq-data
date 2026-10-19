@@ -1,5 +1,10 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
-import { VisionReceiver, VisionAssetOptions } from "./base_vision";
+import {
+  VisionReceiver,
+  VisionAssetOptions,
+  FACE_BOX_CHANNELS,
+  pointChannels,
+} from "./base_vision";
 
 /**
  * Where face-api's weight files are fetched from.
@@ -47,7 +52,22 @@ export interface FaceEmotionOptions extends VisionAssetOptions {
   numFaces?: number;
   /** Also emit estimated age and gender. Costs an extra model download. */
   emitAgeGender?: boolean;
+  /**
+   * Emit the detected face's bounding box, normalized to the video frame.
+   *
+   * The first four channels match {@link FaceLandmarkReceiver}'s `face_box`;
+   * a fifth carries the detector's confidence.
+   */
+  emitFaceBox?: boolean;
+  /**
+   * Emit the 68 landmark points the expression network already computes, as
+   * normalized x, y pairs. Free in compute, but 136 channels on the wire.
+   */
+  emitLandmarks?: boolean;
 }
+
+/** Number of points in face-api's landmark model. */
+const LANDMARK_POINTS = 68;
 
 /**
  * Facial emotion recognition via face-api's expression network.
@@ -56,6 +76,11 @@ export interface FaceEmotionOptions extends VisionAssetOptions {
  * sad, angry, fearful, disgusted, surprised — summing to 1. This is the
  * signal the old platform's Video Emotion device produced, and the channel
  * labels match the keys it dispatched.
+ *
+ * With `emitFaceBox` and `emitLandmarks` it also publishes where the face is,
+ * in normalized frame coordinates, for {@link FaceOverlay} to draw the box and
+ * label over the video. A frame with no face publishes nothing; consumers
+ * read the silence as the face being gone.
  *
  * Like the other camera receivers it reads pixels from an `HTMLVideoElement`
  * that a {@link VideoReceiver} owns, so it can run alongside
@@ -91,7 +116,13 @@ export class FaceEmotionReceiver extends VisionReceiver {
   private options: Required<
     Pick<
       FaceEmotionOptions,
-      "modelPath" | "detector" | "minConfidence" | "numFaces" | "emitAgeGender"
+      | "modelPath"
+      | "detector"
+      | "minConfidence"
+      | "numFaces"
+      | "emitAgeGender"
+      | "emitFaceBox"
+      | "emitLandmarks"
     >
   >;
 
@@ -114,6 +145,8 @@ export class FaceEmotionReceiver extends VisionReceiver {
       minConfidence: 0.5,
       numFaces: 1,
       emitAgeGender: false,
+      emitFaceBox: false,
+      emitLandmarks: false,
       ...options,
       modelPath:
         options.modelPath ?? options.modelAssetPath ?? DEFAULT_FACE_API_MODELS,
@@ -201,6 +234,30 @@ export class FaceEmotionReceiver extends VisionReceiver {
         },
       });
     }
+
+    if (this.options.emitFaceBox) {
+      this.ensureStream({
+        modality: Modality.VIDEO,
+        processingStage: ProcessingStage.INFERRED,
+        name: this.nameFor("face_box", face),
+        additionalMetadata: {
+          samplingRate: this.assets.maxFps,
+          channelInfo: [...FACE_BOX_CHANNELS, { index: 4, label: "score" }],
+        },
+      });
+    }
+
+    if (this.options.emitLandmarks) {
+      this.ensureStream({
+        modality: Modality.VIDEO,
+        processingStage: ProcessingStage.INFERRED,
+        name: this.nameFor("landmarks", face),
+        additionalMetadata: {
+          samplingRate: this.assets.maxFps,
+          channelInfo: pointChannels(LANDMARK_POINTS, ["x", "y"]),
+        },
+      });
+    }
   }
 
   protected processFrame(): void {
@@ -259,6 +316,50 @@ export class FaceEmotionReceiver extends VisionReceiver {
             name: this.nameFor("age_gender", face),
           },
           [result.age, maleProbability]
+        );
+      }
+
+      const detection = result.detection;
+
+      if (this.options.emitFaceBox && detection) {
+        // face-api's boxes are in pixels of the frame it read; dividing by
+        // that frame's own size keeps the box right if the camera changes
+        // resolution mid-session.
+        const { box, imageWidth, imageHeight, score } = detection;
+        this.update(
+          {
+            modality: Modality.VIDEO,
+            processingStage: ProcessingStage.INFERRED,
+            name: this.nameFor("face_box", face),
+          },
+          [
+            box.x / imageWidth,
+            box.y / imageHeight,
+            box.width / imageWidth,
+            box.height / imageHeight,
+            score,
+          ]
+        );
+      }
+
+      const positions = result.landmarks?.positions;
+
+      if (this.options.emitLandmarks && detection && positions) {
+        // `positions` is already shifted into whole-frame pixels;
+        // `relativePositions` would be relative to the face crop instead.
+        const { imageWidth, imageHeight } = detection;
+        const flat = new Float32Array(positions.length * 2);
+        for (let i = 0; i < positions.length; i++) {
+          flat[i * 2] = positions[i].x / imageWidth;
+          flat[i * 2 + 1] = positions[i].y / imageHeight;
+        }
+        this.update(
+          {
+            modality: Modality.VIDEO,
+            processingStage: ProcessingStage.INFERRED,
+            name: this.nameFor("landmarks", face),
+          },
+          flat
         );
       }
     }

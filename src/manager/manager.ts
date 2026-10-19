@@ -34,8 +34,13 @@ export const DEFAULT_PORT = "in";
 /** Floor for a derived staleness limit, so slow streams are never cut off. */
 const AUTO_STALE_FLOOR_MS = 1000;
 
-/** How many of its own packet intervals a port may miss before it reads as stale. */
-const AUTO_STALE_INTERVALS = 4;
+/**
+ * How many of its own packet intervals a port may miss before it reads as stale.
+ *
+ * Shared with {@link FaceOverlay}, so a drawing and a graph agree on when a
+ * stream that went quiet has stopped.
+ */
+export const AUTO_STALE_INTERVALS = 4;
 
 /** Weight of the newest gap in a port's cadence estimate. */
 const INTERVAL_SMOOTHING = 0.2;
