@@ -31,14 +31,14 @@ directory is repo-only.
 | `ref_common.py` | Shared helpers: versions, float32 rounding, compact JSON. |
 | `ref_stats.py` | Statistics, normalization, polyfit/detrend, correlation, windows. |
 | `ref_spectral.py` | Periodogram, amplitude spectrum, band power (own convention + YASA). |
-| `ref_filter.py` | Butterworth responses, `lfilter`, streaming `sosfilt`, `filtfilt`. |
+| `ref_filter.py` | Butterworth responses and coefficients, `firwin`, window functions, `lfilter`/`sosfilt` (with initial state), `filtfilt`/`sosfiltfilt` over every pad type. |
 | `ref_cardiac.py` | HRV definitions (NeuroKit2), ground-truth beats, NeuroKit2 PPG pipeline. |
 | `fixtures/_inputs.json` | The signals, serialised. **Generated, do not hand-edit.** |
 | `fixtures/<family>.json` | Reference values, one file per method family. |
 | `harness.ts` | Fixture loading, packet building, `divergence`, `recorder`. |
 | `allclose.ts` | `toBeAllClose`, a `numpy.allclose`-style Jest matcher. |
 | `*.test.ts` | The golden tests. Picked up by the normal `npm test`. |
-| `report.py` | Builds `report/index.html`, the visual comparison (optional). |
+| `report.py`, `report_template.html` | Build `report/index.html` from the test run (optional); see *Comparison report*. |
 
 ## Divergence tests
 
@@ -58,11 +58,49 @@ GOLDEN_STRICT=1 npx jest tests/unit/golden
 ## Comparison report
 
 ```bash
-GOLDEN_REPORT=1 npx jest tests/unit/golden   # records package outputs to report/measured/
-python tests/unit/golden/report.py           # writes report/index.html
+npm run golden:report    # runs the suite (twice), then writes report/index.html
 ```
 
-`report/` is git-ignored. The report needs only the Python standard library.
+The page is generated from the test run and is generic over what the suites
+declare; nothing in `report.py` or the template names a method. It shows:
+
+- **Figures**, grouped by section, for every `rec.compare(...)` a test makes.
+- **Error figures** for each one (max |Δ|, where it occurs, RMS), computed from
+  the plotted series, so no caption can state a number that has gone stale. A
+  figure whose measured error contradicts what its test declares (`expect`,
+  `tolerance`) is flagged on the page.
+- **Known divergences**: every `[divergence]` test, with the gap taken from the
+  failure message of a `GOLDEN_STRICT=1` run.
+- **Tallies** per suite, from Jest's own JSON, and any failing test.
+
+To put a new method in the report, declare a figure in its test, next to the
+numbers the test already has:
+
+```ts
+const rec = recorder("my_method");
+afterAll(() => rec.flush());
+
+rec.compare({
+  id: "my_method:case",
+  group: "My method",            // section heading
+  title: "What this shows",
+  note: "How to read it.",       // no numbers: they are computed
+  kind: "line",                  // or "bars" with `categories`
+  x: frequencies,
+  series: [
+    { name: "SciPy", role: "reference", values: expected },
+    { name: "Package", role: "package", values: actual },
+  ],
+  expect: "match",               // or "diverges" for a known gap
+});
+```
+
+Series `role` is `package`, `reference` (NumPy/SciPy), `field` (YASA,
+NeuroKit2) or `truth`; it sets the colour. See `Comparison` in `harness.ts` for
+the axis, domain, guide and tolerance options. `compare` does nothing unless
+`GOLDEN_REPORT=1`, so it costs nothing in a normal run.
+
+`report/` is git-ignored. `report.py` needs only the Python standard library.
 
 ## Running the tests
 
@@ -92,6 +130,11 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r tests/unit/golden/requirements.txt
 python tests/unit/golden/generate.py
 ```
+
+To rebuild one family only, name it — `python tests/unit/golden/generate.py
+filter` (or `spectral`, `stats`, `cardiac`, `rms`). That also needs only that
+family's libraries (the filter fixtures need just NumPy and SciPy, not YASA or
+NeuroKit2) and leaves `_inputs.json` alone.
 
 Then review the JSON diff and commit it. Each fixture records the exact
 library versions it was produced with under `generatedBy`. Generation is
@@ -184,9 +227,19 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
 
 **Filtering**
 
+- Butterworth, S. (1930). On the theory of filter amplifiers. *Wireless
+  Engineer* 7:536–541. The maximally flat response `butter` realises; SciPy's
+  `buttap` → `lp2*_zpk` → `bilinear_zpk` → `zpk2sos` is the design path ported
+  (D1, closed).
+- Harris, F.J. (1978). On the use of windows for harmonic analysis with the
+  discrete Fourier transform. *Proc IEEE* 66:51–83. doi:10.1109/PROC.1978.10837.
+  The window catalogue behind `firwin`'s `window` option.
+- Kaiser, J.F. (1974). Nonrecursive digital filter design using the I0-sinh
+  window function. *Proc IEEE Int Symp Circuits Syst*, 20–23. `kaiserord`.
 - Bristow-Johnson, R. *Audio EQ Cookbook.* W3C Working Group Note.
   https://www.w3.org/TR/audio-eq-cookbook/. The biquad formulas
-  `designBiquad` uses (D1).
+  `designBiquad` uses; it is not a SciPy design and nothing golden-tested
+  depends on it.
 - Gustafsson, F. (1996). Determining the initial states in forward-backward
   filtering. *IEEE Trans Signal Process* 44:988–992. Steady-state initial
   conditions for `filtfilt` (D6).

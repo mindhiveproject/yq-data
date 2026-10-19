@@ -4,8 +4,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-/* Layout: a single reading column, like a lab notebook page. Findings first,
-   then one figure per divergence, then the conformance ledger. */
+/* Layout: a single reading column. Summary first, then one section per figure
+   group (generated from what the tests declare), then the ledgers. */
 :root {
   --page: #f6f7f8;
   --surface: #fcfcfb;
@@ -19,6 +19,8 @@
   --s1: #2a78d6;  /* package */
   --s2: #eb6834;  /* reference */
   --s3: #1baf7a;  /* field standard / truth */
+  --s4: #7b5bd6;  /* second package series */
+  --s5: #c28b1f;  /* second reference series */
   --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
@@ -26,14 +28,14 @@
   :root:not([data-theme="light"]) {
     --page: #0f1114; --surface: #17191d; --ink: #eef0f3; --ink-2: #b9bfca; --muted: #8a909b;
     --rule: #2a2e35; --axis: #3a3f47; --grid: #23262c; --code-bg: #22262c;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #9a80ec; --s5: #d9a93f;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --page: #0f1114; --surface: #17191d; --ink: #eef0f3; --ink-2: #b9bfca; --muted: #8a909b;
   --rule: #2a2e35; --axis: #3a3f47; --grid: #23262c; --code-bg: #22262c;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #9a80ec; --s5: #d9a93f;
   color-scheme: dark;
 }
 body {
@@ -80,85 +82,39 @@ details { font-size: 13.5px; }
 summary { cursor: pointer; color: var(--ink-2); }
 summary:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; border-radius: 4px; }
 pre { font-family: var(--font-data); font-size: 12.5px; background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 0; }
-</style>
 
-<main>
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.card .n { font-family: var(--font-data); font-size: 26px; font-weight: 500; line-height: 1.1; }
+.card .l { font-size: 13px; color: var(--ink-2); }
+.card.bad .n { color: var(--s2); }
+.panel.wide { grid-column: 1 / -1; }
+.note { font-size: 13px; color: var(--ink-2); }
+.stat { font-family: var(--font-data); font-size: 11.5px; color: var(--muted); }
+.badge { font-family: var(--font-data); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--rule); color: var(--ink-2); margin-left: 8px; vertical-align: 1px; }
+.badge.gap { color: var(--s2); border-color: var(--s2); }
+.flag { font-size: 12.5px; color: var(--s2); }
+td.gap { font-family: var(--font-data); font-size: 12px; color: var(--ink-2); max-width: 46ch; }
+</style>
+<main id="app">
   <header>
     <div class="eyebrow">Golden-value suite · tests/unit/golden</div>
     <h1>yq-data Golden Values</h1>
-    <p class="lede">The package's signal processing, checked against SciPy, YASA and NeuroKit2 and against synthetic signals with known ground truth. Most of it matches to float precision. This page charts the five divergences that change the numbers most.</p>
+    <p class="lede" id="lede"></p>
     <div class="provenance" id="provenance"></div>
   </header>
-
+  <div class="cards" id="cards"></div>
+  <div id="failing"></div>
+  <div id="groups" style="display:grid;gap:48px"></div>
+  <section id="divergences"></section>
+  <section id="suites"></section>
+  <section id="residuals"></section>
   <section>
-    <div class="section-head">
-      <div class="eyebrow">D1 · Filter design</div>
-      <h2>Band filters are not Butterworth</h2>
-      <p class="caption">Low-pass and high-pass match <code>scipy.signal.butter</code> to 1e-15. Band-pass and band-stop are built from identical RBJ biquads at the centre frequency, so the cutoffs sit near −6 dB instead of −3 dB and the passband sags. Package order 4 is compared with <code>butter(2, band)</code>, which has the same pole count.</p>
-    </div>
-    <div class="figure">
-      <div class="legend"><span><i class="key" style="background:var(--s1)"></i>Package designFilter</span><span><i class="key" style="background:var(--s2)"></i>scipy.signal.butter</span></div>
-      <div class="multiples" id="filters"></div>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <div class="eyebrow">D6 · Zero-phase filtering</div>
-      <h2>filtfilt edges start from zero</h2>
-      <p class="caption">Synthetic Muse PPG on a raw-sensor offset of 1.2×10⁵ counts, 3 Hz low-pass, zero-phase. SciPy seeds each pass with the steady-state response, while the package starts from a zero state. The interior agrees to about 1e-6. At the ends the package is off by up to 8,265 counts against a pulse peak-to-peak of 912.</p>
-    </div>
-    <div class="figure">
-      <div class="legend"><span><i class="key" style="background:var(--s1)"></i>Package filtfilt</span><span><i class="key" style="background:var(--s2)"></i>scipy.signal.filtfilt</span></div>
-      <div class="multiples" id="edges"></div>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <div class="eyebrow">D2 · BandPower</div>
-      <h2>Default relative band power is not a share of power</h2>
-      <p class="caption">Synthetic 4-channel Muse EEG, 4 s window, averaged across channels. The defaults average spectral amplitude, so <code>relative: true</code> gives each band's share of mean amplitude. Switching to <code>scaling: "psd"</code> with <code>aggregate: "sum"</code> lands within 0.03 of YASA.</p>
-    </div>
-    <div class="figure">
-      <div class="legend" id="bp-legend"></div>
-      <div class="chart" id="bandpower"></div>
-      <details><summary>Show values</summary><div class="table-wrap"><table id="bp-table"></table></div></details>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <div class="eyebrow">D7 · HeartRate</div>
-      <h2>Edge false beats inflate HRV</h2>
-      <p class="caption">SDNN per 10 s window, from the HeartRate node and from the true beat locations of each synthetic signal. Each false beat sits within 0.1 s of a window boundary. The median-based rate absorbs it and stays within 1.5 bpm. SDNN and RMSSD take every interval as given, with no normal-to-normal cleaning.</p>
-    </div>
-    <div class="figure">
-      <div class="legend"><span><i class="key box" style="background:var(--s1)"></i>Package SDNN</span><span><i class="key box" style="background:var(--s3)"></i>True-beat SDNN</span></div>
-      <div class="chart" id="sdnn"></div>
-      <details><summary>Show values</summary><div class="table-wrap"><table id="sdnn-table"></table></div></details>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <div class="eyebrow">D9 · Windowing</div>
-      <h2>Windowing falls behind real time</h2>
-      <p class="caption">Muse sends 12 EEG samples per packet. A 2 s window with a 0.04 s hop (10 samples) has more than one new frame per packet, but the node emits one window per packet, so the surplus queues up. The line replays that rule for a minute of streaming. In the test, 30 s of data produced <span id="frames"></span>.</p>
-    </div>
-    <div class="figure">
-      <div class="chart" id="lag"></div>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Reproduce</h2>
-      <p class="caption">The full list of divergences, with suggested directions, is under Open Gaps in the package spec. Methods and references are in <code>tests/unit/golden/README.md</code>.</p>
-    </div>
-<pre>npx jest tests/unit/golden                     # green; divergences are expected failures
-GOLDEN_STRICT=1 npx jest tests/unit/golden     # print each measured gap
-GOLDEN_REPORT=1 npx jest tests/unit/golden &amp;&amp; python tests/unit/golden/report.py</pre>
+    <div class="section-head"><h2>Reproduce</h2>
+      <p class="caption">Everything on this page is generated from the test run: a figure appears when a test declares it with <code>rec.compare(...)</code> (see <code>harness.ts</code>), and every error figure is computed from the plotted series. Methods and references are in <code>tests/unit/golden/README.md</code>.</p></div>
+<pre>npm run golden:report                          # run the suite, then rebuild report/index.html
+npx jest tests/unit/golden                     # green; divergences are expected failures
+GOLDEN_STRICT=1 npx jest tests/unit/golden     # print each measured gap</pre>
   </section>
 </main>
 
@@ -210,11 +166,12 @@ function placeTip(tip, container, x, y) {
 }
 
 function lineChart(container, opts) {
-  const W = 600, H = opts.height || 300;
-  const m = { l: 56, r: 14, t: 10, b: 38 };
+  const W = opts.width || 420, H = opts.height || 300;
+  const m = { l: 64, r: 14, t: 10, b: 38 };
   const all = opts.series.flatMap((s) => s.points);
   const xs = all.map((p) => p[0]);
-  let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let x0 = opts.xDomain ? opts.xDomain[0] : Math.min(...xs);
+  let x1 = opts.xDomain ? opts.xDomain[1] : Math.max(...xs);
   let y0 = opts.yMin ?? Math.min(...all.map((p) => p[1]));
   let y1 = opts.yMax ?? Math.max(...all.map((p) => p[1]));
   if (opts.yMin === undefined || opts.yMax === undefined) {
@@ -234,7 +191,7 @@ function lineChart(container, opts) {
     tx.textContent = opts.yFormat ? opts.yFormat(t) : fmt(t);
   }
   const xt = opts.xLog
-    ? [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100].filter((t) => t >= x0 && t <= x1)
+    ? [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].filter((t) => t >= x0 && t <= x1)
     : niceTicks(x0, x1, 6);
   for (const t of xt) {
     el("line", { x1: sx(t), x2: sx(t), y1: H - m.b, y2: H - m.b + 4, style: "stroke:var(--axis)" }, svg);
@@ -259,7 +216,10 @@ function lineChart(container, opts) {
 
   for (const s of opts.series) {
     const d = s.points.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join("");
-    el("path", { d, fill: "none", style: `stroke:${s.color}`, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    // Earlier series are drawn wider, so a reference that the package sits
+    // exactly on still shows as a halo instead of vanishing underneath.
+    const width = opts.series.length > 1 ? Math.max(2, 5 - 3 * opts.series.indexOf(s)) : 2;
+    el("path", { d, fill: "none", style: `stroke:${s.color}`, "stroke-width": width, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
   }
 
   const cross = el("line", { y1: m.t, y2: H - m.b, style: "stroke:var(--axis)", visibility: "hidden" }, svg);
@@ -298,10 +258,13 @@ function roundedBar(x, y, w, h) {
 }
 
 function barChart(container, opts) {
-  const W = 600, H = opts.height || 280;
-  const m = { l: 48, r: 8, t: 10, b: opts.twoLineLabels ? 46 : 32 };
+  const W = opts.width || 780, H = opts.height || 280;
+  const m = { l: 60, r: 8, t: 10, b: opts.twoLineLabels ? 46 : 32 };
   const max = Math.max(...opts.series.flatMap((s) => s.values));
   const yt = niceTicks(0, max * 1.05, 5);
+  // The axis must reach the tallest bar: niceTicks stops at the last tick
+  // below its upper bound, so add one more step when that falls short.
+  if (yt.length > 1 && yt[yt.length - 1] < max) yt.push(+(yt[yt.length - 1] + (yt[1] - yt[0])).toFixed(10));
   const y1 = yt[yt.length - 1];
   const sy = (v) => m.t + (1 - v / y1) * (H - m.t - m.b);
   const band = (W - m.l - m.r) / opts.categories.length;
@@ -311,7 +274,7 @@ function barChart(container, opts) {
   for (const t of yt) {
     el("line", { x1: m.l, x2: W - m.r, y1: sy(t), y2: sy(t), style: "stroke:var(--grid)" }, svg);
     const tx = el("text", { x: m.l - 6, y: sy(t) + 3.5, "text-anchor": "end" }, svg);
-    tx.textContent = opts.yFormat ? opts.yFormat(t) : fmt(t);
+    tx.textContent = opts.yFormat ? opts.yFormat(t) : fmt(t, 2);
   }
   const yl = el("text", { x: 11, y: (m.t + H - m.b) / 2, "text-anchor": "middle", transform: `rotate(-90 11 ${(m.t + H - m.b) / 2})` }, svg);
   yl.textContent = opts.yLabel;
@@ -342,89 +305,108 @@ function barChart(container, opts) {
   container.insertBefore(svg, tip);
 }
 
-function table(id, head, rows, numeric = []) {
-  const t = document.getElementById(id);
-  t.innerHTML = "<thead><tr>" + head.map((h, i) => `<th class="${numeric.includes(i) ? "num" : ""}">${h}</th>`).join("") + "</tr></thead><tbody>" +
-    rows.map((r) => "<tr>" + r.map((c, i) => `<td class="${numeric.includes(i) ? "num" : ""}">${c}</td>`).join("") + "</tr>").join("") + "</tbody>";
+
+function sci(v) {
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  return a < 1e-3 || a >= 1e5 ? v.toExponential(1) : fmt(v, 3);
+}
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const h = (html) => { const d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstElementChild; };
+
+function tableHtml(head, rows, numeric = []) {
+  return "<div class=\"table-wrap\"><table><thead><tr>" +
+    head.map((t, i) => `<th class="${numeric.includes(i) ? "num" : ""}">${t}</th>`).join("") +
+    "</tr></thead><tbody>" +
+    rows.map((r) => "<tr>" + r.map((c, i) => `<td class="${numeric.includes(i) ? "num" : ""}">${c}</td>`).join("") + "</tr>").join("") +
+    "</tbody></table></div>";
+}
+
+function renderFigure(f) {
+  const panel = h(`<div class="panel ${f.kind === "bars" ? "wide" : ""}"></div>`);
+  panel.appendChild(h(`<div class="panel-title">${esc(f.title)}<span class="badge ${f.expect === "diverges" ? "gap" : ""}">${f.expect === "diverges" ? "known gap" : "matches"}</span></div>`));
+  if (f.note) panel.appendChild(h(`<p class="note">${esc(f.note)}</p>`));
+  panel.appendChild(h(`<div class="legend">${f.series.map((s) =>
+    `<span><i class="key ${f.kind === "bars" ? "box" : ""}" style="background:${s.colour}"></i>${esc(s.name)}</span>`).join("")}</div>`));
+  const chart = h('<div class="chart"></div>');
+  panel.appendChild(chart);
+
+  if (f.kind === "bars") {
+    barChart(chart, {
+      label: f.title, categories: f.categories, yLabel: f.yLabel || "", height: 280,
+      twoLineLabels: f.categories.some((c) => c.includes(" · ")),
+      valueFormat: (v) => fmt(v, 3) + (f.unit || ""),
+      series: f.series.map((s) => ({ name: s.name, color: s.colour, values: s.values })),
+    });
+  } else {
+    const [lo, hi] = f.xDomain || [-Infinity, Infinity];
+    const series = f.series.map((s) => {
+      const xs = s.x || f.x;
+      return {
+        name: s.name, color: s.colour,
+        points: s.values.map((v, i) => [xs[i], v]).filter((p) => p[0] >= lo && p[0] <= hi && (f.xScale !== "log" || p[0] > 0)),
+      };
+    });
+    lineChart(chart, {
+      label: f.title, height: 260, series, xLog: f.xScale === "log", xDomain: f.xDomain,
+      xName: f.xLabel || "x", xLabel: f.xLabel || "", yLabel: f.yLabel || "", unit: f.unit || "",
+      yMin: f.yDomain ? f.yDomain[0] : undefined, yMax: f.yDomain ? f.yDomain[1] : undefined,
+      refLines: (f.guides || []).map((g) => ({ axis: g.axis, value: g.value, label: g.label })),
+    });
+  }
+
+  if (f.stats.length) {
+    panel.appendChild(h(`<div class="stat">${f.stats.map((p) =>
+      `${esc(p.package)} vs ${esc(p.against)}: max |Δ| ${sci(p.maxAbs)} at ${typeof p.worstAt === "number" ? fmt(p.worstAt, 3) : esc(p.worstAt)} · RMS ${sci(p.rms)}`).join("<br>")}</div>`));
+  }
+  if (f.flag) panel.appendChild(h(`<div class="flag">⚠ ${esc(f.flag)}</div>`));
+  return panel;
 }
 
 function render() {
   if (!DATA) return;
-  const g = DATA.generatedBy;
+  const s = DATA.summary;
+  document.getElementById("lede").textContent =
+    `The package's signal processing, checked against reference libraries and against synthetic signals with known ground truth. Generated ${DATA.date} from ${s.tests} tests; ${s.figures} figures below are declared by the tests themselves.`;
   document.getElementById("provenance").textContent =
-    `References: Python ${g.python} · NumPy ${g.numpy} · SciPy ${g.scipy} · NeuroKit2 ${g.neurokit2} · YASA ${g.yasa}`;
+    "References: " + Object.entries(DATA.provenance).map(([k, v]) => `${k} ${v}`).join(" · ");
 
+  document.getElementById("cards").append(
+    h(`<div class="card"><div class="n">${s.passed - s.gaps}</div><div class="l">tests match their reference</div></div>`),
+    h(`<div class="card"><div class="n">${s.gaps}</div><div class="l">known divergences</div></div>`),
+    h(`<div class="card ${s.failed ? "bad" : ""}"><div class="n">${s.failed}</div><div class="l">failing</div></div>`),
+    h(`<div class="card"><div class="n">${s.figures}</div><div class="l">figures</div></div>`));
 
-  const filters = document.getElementById("filters");
-  for (const f of DATA.filters) {
-    const panel = document.createElement("div"); panel.className = "panel";
-    panel.innerHTML = `<div class="panel-title">${f.title}</div>`;
-    const chart = document.createElement("div"); chart.className = "chart"; panel.appendChild(chart);
-    filters.appendChild(panel);
-    const xs = f.package.map((p) => p[0]);
-    const cut = f.cutoff;
-    const lo = Math.max(xs[0], cut[0] / 8), hi = Math.min(xs[xs.length - 1], cut[1] * 4);
-    const clip = (pts) => pts.filter((p) => p[0] >= lo && p[0] <= hi);
-    lineChart(chart, {
-      label: `${f.title}: magnitude response`, height: 260, xLog: true, xName: "f (Hz)", unit: " dB",
-      xLabel: "Frequency (Hz)", yLabel: "Gain (dB)", yMin: -30, yMax: 2, yTicks: [-30, -20, -10, -6, -3, 0],
-      series: [
-        { name: "SciPy", color: "var(--s2)", points: clip(f.reference) },
-        { name: "Package", color: "var(--s1)", points: clip(f.package) },
-      ],
-      refLines: [{ axis: "y", value: -3.0103, label: "−3 dB" }, { axis: "x", value: cut[0] }, { axis: "x", value: cut[1] }],
-    });
+  if (DATA.failing.length) {
+    document.getElementById("failing").append(h(`<section><div class="section-head"><h2>Failing</h2><p class="caption">These are neither matches nor known divergences.</p></div>${
+      tableHtml(["Suite", "Test"], DATA.failing.map((t) => [esc(t.suite), esc(t.title)]))}</section>`));
   }
 
-  const edges = document.getElementById("edges");
-  for (const e of DATA.edges) {
-    const panel = document.createElement("div"); panel.className = "panel";
-    panel.innerHTML = `<div class="panel-title">${e.title}</div>`;
-    const chart = document.createElement("div"); chart.className = "chart"; panel.appendChild(chart);
-    edges.appendChild(panel);
-    lineChart(chart, {
-      label: `filtfilt ${e.title}`, height: 260, xName: "t (s)", xLabel: "Time (s)", yLabel: "Sensor counts",
-      yFormat: (v) => (v / 1000).toFixed(0) + "K",
-      series: [
-        { name: "SciPy", color: "var(--s2)", points: e.reference },
-        { name: "Package", color: "var(--s1)", points: e.package },
-      ],
-    });
+  const groups = document.getElementById("groups");
+  for (const g of DATA.groups) {
+    const section = h(`<section><div class="section-head"><h2>${esc(g.name)}</h2></div></section>`);
+    const card = h('<div class="figure"><div class="multiples"></div></div>');
+    section.appendChild(card);
+    for (const f of g.figures) card.firstElementChild.appendChild(renderFigure(f));
+    groups.appendChild(section);
   }
 
-  const bp = DATA.bandPower;
-  const bpColors = ["var(--s1)", "var(--s2)", "var(--s3)"];
-  document.getElementById("bp-legend").innerHTML = bp.series.map((s, i) =>
-    `<span><i class="key box" style="background:${bpColors[i]}"></i>${s.name}</span>`).join("");
-  barChart(document.getElementById("bandpower"), {
-    label: "Relative band power by band", categories: bp.bands, yLabel: "Share of total",
-    valueFormat: (v) => v.toFixed(3), yFormat: (v) => v.toFixed(2),
-    series: bp.series.map((s, i) => ({ ...s, color: bpColors[i] })),
-  });
-  table("bp-table", ["Band", ...bp.series.map((s) => s.name)],
-    bp.bands.map((b, i) => [b, ...bp.series.map((s) => s.values[i].toFixed(3))]), [1, 2, 3]);
+  const dv = document.getElementById("divergences");
+  dv.append(h(`<div class="section-head"><h2>Known divergences</h2><p class="caption">Each is a test asserting the reference behaviour, registered as an expected failure. ${
+    DATA.strictRan ? "The gap is the failure message from a <code>GOLDEN_STRICT=1</code> run." : "Run with <code>GOLDEN_STRICT=1</code> (<code>npm run golden:report</code> does) to include the measured gap."}</p></div>`));
+  dv.append(h(tableHtml(["Suite", "Behaviour", "Measured gap"],
+    DATA.divergences.map((d) => [esc(d.suite), `${esc(d.where)}<br>${esc(d.title)}`, `<span class="gap">${esc(d.gap || "")}</span>`]))));
+  dv.querySelectorAll("td:nth-child(3)").forEach((td) => td.classList.add("gap"));
 
-  const sd = DATA.sdnn;
-  barChart(document.getElementById("sdnn"), {
-    label: "SDNN per window", categories: sd.windows, yLabel: "SDNN (ms)", twoLineLabels: true, height: 300,
-    valueFormat: (v) => v.toFixed(1) + " ms",
-    series: [
-      { name: "Package", color: "var(--s1)", values: sd.package },
-      { name: "True beats", color: "var(--s3)", values: sd.truth },
-    ],
-  });
-  table("sdnn-table", ["Window", "Package (ms)", "True beats (ms)", "Ratio"],
-    sd.windows.map((w, i) => [w, sd.package[i].toFixed(1), sd.truth[i].toFixed(1), (sd.package[i] / sd.truth[i]).toFixed(2) + "×"]), [1, 2, 3]);
+  const su = document.getElementById("suites");
+  su.append(h('<div class="section-head"><h2>By suite</h2></div>'));
+  su.append(h(tableHtml(["Suite", "Tests", "Passing", "Known gaps", "Failing"],
+    DATA.suites.map((r) => [esc(r.name), r.tests, r.passed - r.gaps, r.gaps, r.failed]), [1, 2, 3, 4])));
 
-  const f = DATA.frames;
-  document.getElementById("frames").textContent =
-    `${f.emitted} of ${f.expected} windows and ended ${f.lagSecondsAtEnd.toFixed(1)} s behind`;
-  lineChart(document.getElementById("lag"), {
-    label: "Windowing lag over time", height: 240, xName: "t (s)", unit: " s",
-    xLabel: "Streaming time (s)", yLabel: "Lag (s)", yMin: 0,
-    series: [{ name: "Lag", color: "var(--s1)", points: DATA.lag }],
-  });
-
+  const rows = DATA.groups.flatMap((g) => g.figures.flatMap((f) => f.stats.map((p) => [esc(f.title), esc(`${p.package} vs ${p.against}`), sci(p.maxAbs), sci(p.relMax), sci(p.rms), f.expect === "diverges" ? "known gap" : "matches"])));
+  const re = document.getElementById("residuals");
+  re.append(h('<details><summary>Measured error for every figure</summary></details>'));
+  re.firstElementChild.append(h(tableHtml(["Figure", "Compared", "Max |Δ|", "Of range", "RMS", "Status"], rows, [2, 3, 4])));
 }
 render();
 </script>

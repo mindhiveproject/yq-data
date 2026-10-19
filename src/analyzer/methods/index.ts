@@ -10,5 +10,6 @@
 export * from "./window";
 export * from "./fft";
 export * from "./filter";
+export * from "./filter_design";
 export * from "./stats";
 export * from "./peaks";

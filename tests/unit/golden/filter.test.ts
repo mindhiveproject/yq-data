@@ -1,14 +1,16 @@
 /**
- * Golden-value tests: filter design, the difference-equation engine, the
- * streaming Filtering node and zero-phase filtering, against SciPy.
+ * Golden-value tests: Butterworth design (by response), the
+ * difference-equation engine, the streaming Filtering node and zero-phase
+ * filtering, against SciPy.
  *
  * Fixtures: `filter_design.json`, `lfilter.json`, `filter_streaming.json`,
- * `filtfilt.json` (see `ref_filter.py`).
+ * `filtfilt.json` (see `ref_filter.py`). Coefficient-level design, FIR
+ * design, windows, initial conditions and pad types are in
+ * `filter_design.test.ts`.
  *
- * Design is compared by magnitude response |H(f)|, not by coefficients:
- * section ordering and pairing may legitimately differ. Band filters of
- * package order K are compared with `scipy.signal.butter(K // 2, ...)`, which
- * has the same number of poles (SciPy doubles the order of band designs).
+ * Here the design is compared by magnitude response |H(f)|, the quantity a
+ * user hears or sees. `order` is the `N` of `scipy.signal.butter(N, ...)`, so
+ * band filters have 2N poles in both.
  *
  * `[divergence]` tests use `divergence` (= `it.failing`); see README.md.
  */
@@ -19,7 +21,7 @@ import {
   Filtering,
   designFilter,
   filtfilt,
-  filtfiltCascade,
+  sosfiltfilt,
   lfilter,
 } from "../../../src";
 import {
@@ -68,7 +70,6 @@ const ff = fixture<{
     b: number[];
     a: number[];
     scipy: number[];
-    zeroInitOddPad: number[];
   }[];
   sosCases: { id: string; signal: string; sections: Biquad[]; scipy: number[] }[];
 }>("filtfilt");
@@ -90,52 +91,55 @@ const responseOf = (c: DesignCase) =>
 
 const byId = (id: string) => design.cases.find((c) => c.id === id)!;
 
-describe("golden: Butterworth design vs scipy.signal.butter", () => {
-  const even = design.cases.filter(
-    (c) => (c.kind === "lowpass" || c.kind === "highpass") && c.order % 2 === 0
-  );
-  const band = design.cases.filter((c) => c.kind === "bandpass" || c.kind === "bandstop");
+// Cases drawn in the report: every band filter, plus one low-pass and one
+// high-pass for contrast.
+const DRAWN = ["lowpass_40_256_o4", "highpass_0.5_256_o4"];
 
-  it.each(even)("$id ($why)", (c) => {
+describe("golden: Butterworth design vs scipy.signal.butter", () => {
+  it.each(design.cases)("$id ($why)", (c) => {
     const actual = responseOf(c);
     rec.record(`design:${c.id}`, actual);
-    // RBJ biquads with Butterworth pole-pair Qs are the bilinear transform of
-    // the analog prototype, prewarped at the cutoff -- exactly what butter()
-    // does. Measured agreement is ~1e-15 (1e-12 for the 0.5 Hz high-pass).
+    if (DRAWN.includes(c.id) || Array.isArray(c.cutoff)) {
+      const edges = Array.isArray(c.cutoff) ? c.cutoff : [c.cutoff];
+      const lo = edges[0] / 8;
+      const hi = Math.min(edges[edges.length - 1] * 4, c.samplingRate / 2);
+      rec.compare({
+        id: `design:${c.id}`,
+        group: "Butterworth design",
+        title: `${c.kind} ${edges.map((e) => +e.toPrecision(3)).join("–")} Hz @ ${c.samplingRate} Hz, order ${c.order} (${c.why})`,
+        note: "Magnitude response in dB. A Butterworth filter is −3.01 dB at each cutoff.",
+        kind: "line",
+        x: c.frequencies,
+        series: [
+          { name: "SciPy", role: "reference", values: c.magnitude.map(toDb) },
+          { name: "Package", role: "package", values: actual.map(toDb) },
+        ],
+        xScale: "log",
+        xDomain: [lo, hi],
+        yDomain: [-30, 2],
+        xLabel: "Frequency (Hz)",
+        yLabel: "Gain (dB)",
+        unit: " dB",
+        guides: [
+          { axis: "y", value: -3.0103, label: "−3 dB" },
+          ...edges.map((value) => ({ axis: "x" as const, value })),
+        ],
+        expect: "match",
+      });
+    }
+    // The design is SciPy's own algorithm, so the response agrees to rounding
+    // error: measured 1e-15 for most cases, 1e-12 for the 0.5 Hz high-pass.
     expect(actual).toBeAllClose(c.magnitude, { rtol: 0, atol: 1e-10 });
   });
 
-  it("odd order is rounded up: order 3 realises butter(4)", () => {
-    // Documented convention (FilteringParameters.order): an order is realised
-    // as round(order / 2) biquads, so 3 -> 4th order, 5 -> 6th.
-    const actual = responseOf(byId("lowpass_40_256_o3"));
-    expect(actual).toBeAllClose(byId("lowpass_40_256_o4").magnitude, { rtol: 0, atol: 1e-10 });
-  });
-
-  describe.each(band)("$id ($why)", (c) => {
+  it.each(design.cases)("$id: -3.01 dB at the cutoff frequencies", (c) => {
     const actual = responseOf(c);
-    rec.record(`design:${c.id}`, actual);
-    const edges = c.cutoff as [number, number];
-    const at = (f: number) => actual[c.frequencies.indexOf(f)];
-
-    // A Butterworth band filter is -3.01 dB at both cutoffs by definition.
-    // designFilter realises a band filter as identical RBJ band biquads at
-    // the geometric centre, so the edges sit at -3 dB *per section*: -6 dB
-    // for the default order 4, and the passband sags between them.
-    // Divergence D1.
-    divergence("[divergence] -3.01 dB at both cutoff frequencies", () => {
-      expect([toDb(at(edges[0])), toDb(at(edges[1]))]).toBeAllClose([-3.0103, -3.0103], {
-        rtol: 0,
-        atol: 0.1,
-      });
-    });
-
-    divergence("[divergence] magnitude response matches scipy within 0.1 dB above -20 dB", () => {
-      const keep = c.magnitude.map((m) => m > 0.1);
-      const pkgDb = actual.filter((_, i) => keep[i]).map(toDb);
-      const refDb = c.magnitude.filter((_, i) => keep[i]).map(toDb);
-      expect(pkgDb).toBeAllClose(refDb, { rtol: 0, atol: 0.1 });
-    });
+    const edges = Array.isArray(c.cutoff) ? c.cutoff : [c.cutoff];
+    const atEdges = edges.map((f) => toDb(actual[c.frequencies.indexOf(f)]));
+    // A Butterworth filter of any order and type is -3.0103 dB (1/sqrt 2) at
+    // each cutoff by definition. The old RBJ band design missed this by 3 dB
+    // per section (D1, closed).
+    expect(atEdges).toBeAllClose(edges.map(() => -3.0103), { rtol: 0, atol: 0.001 });
   });
 });
 
@@ -146,12 +150,12 @@ describe("golden: lfilter vs scipy.signal.lfilter", () => {
     rec.record(`lfilter:${c.id}`, y);
 
     it("matches to float32 precision of the output scale", () => {
-      // The engine stores y[n] in a Float32Array and feeds it back, so the
-      // recursion runs at float32 width. Measured: 8e-8 (FIR), 8e-7 (10 Hz
-      // biquad), 3e-5 of output RMS for the 0.5 Hz high-pass on a 5000 uV
-      // offset -- poles near z = 1 amplify float32 rounding. 1e-4 of RMS
-      // bounds all three; in absolute terms the worst case is 0.01 uV.
-      const tol = 1e-4 * rmsOf(c.output);
+      // The recursion runs in float64 and is rounded once, on output, so the
+      // only difference from SciPy is that final float32 rounding (6e-8
+      // relative). Poles near z = 1 -- the 0.5 Hz high-pass on a 5000 uV
+      // offset -- no longer amplify it, as they did when y was fed back at
+      // float32 width (3e-5 of output RMS before).
+      const tol = 1e-6 * rmsOf(c.output);
       expect(maxAbsDiff(y, c.output)).toBeLessThan(tol);
     });
   });
@@ -168,30 +172,15 @@ describe("golden: Filtering node, streamed in device-sized packets", () => {
     return out;
   };
 
-  const matched = streaming.cases.filter((c) => c.kind !== "bandpass");
-  it.each(matched)("$id: state carries across $packetSize-sample packets", (c) => {
+  it.each(streaming.cases)("$id: state carries across $packetSize-sample packets", (c) => {
     const out = run(c);
     rec.record(`stream:${c.id}`, out);
     out.forEach((ch, i) => {
       // Same float32 budget as lfilter above: chunking adds nothing, which is
       // the point -- 640 packet boundaries and no discontinuity at any.
-      expect(maxAbsDiff(ch, c.output[i])).toBeLessThan(1e-4 * rmsOf(c.output[i]));
+      expect(maxAbsDiff(ch, c.output[i])).toBeLessThan(1e-6 * rmsOf(c.output[i]));
     });
   });
-
-  // The default Filtering node (bandpass [1, 40], order 4) inherits the band
-  // design gap. Divergence D1.
-  const banded = streaming.cases.filter((c) => c.kind === "bandpass");
-  divergence.each(banded)(
-    "[divergence] $id: default bandpass output matches a Butterworth bandpass",
-    (c) => {
-      const out = run(c);
-      rec.record(`stream:${c.id}`, out);
-      out.forEach((ch, i) =>
-        expect(maxAbsDiff(ch, c.output[i])).toBeLessThan(1e-2 * rmsOf(c.output[i]))
-      );
-    }
-  );
 });
 
 describe("golden: zero-phase filtering vs scipy.signal.filtfilt", () => {
@@ -202,40 +191,56 @@ describe("golden: zero-phase filtering vs scipy.signal.filtfilt", () => {
     const y = filtfilt(c.b, c.a, x);
     rec.record(`filtfilt:${c.id}`, y);
     const scale = rmsOf(c.scipy);
-
-    it("reproduces its documented convention (odd padding, zero initial state)", () => {
-      // float32 arithmetic on a start-up transient as large as the input's
-      // offset (1.2e5 for the raw-sensor case): 1e-6 of that offset.
-      expect(maxAbsDiff(y, c.zeroInitOddPad)).toBeLessThan(1e-6 * Math.max(...x.map(Math.abs)));
-    });
+    if (c.signal.includes("offset")) {
+      // The raw-sensor-like PPG: the edges are where a zero initial state
+      // would show, on top of a large offset.
+      const fs = inputs[c.signal].fs;
+      const span = 2 * fs;
+      const slices: [string, number, number][] = [
+        ["first 2 s", 0, span],
+        ["last 2 s", x.length - span, x.length],
+      ];
+      for (const [label, lo, hi] of slices) {
+        rec.compare({
+          id: `filtfilt:${c.id}:${label}`,
+          group: "Zero-phase filtering",
+          title: `filtfilt, ${label} (${c.id.split(":")[0].replace(/_/g, " ")})`,
+          note: "Raw signal sits on a large offset, so any start-up transient at the edges would be visible.",
+          kind: "line",
+          x: Array.from({ length: hi - lo }, (_, i) => (lo + i) / fs),
+          series: [
+            { name: "SciPy", role: "reference", values: c.scipy.slice(lo, hi) },
+            { name: "Package", role: "package", values: y.subarray(lo, hi) },
+          ],
+          xLabel: "Time (s)",
+          yLabel: "Sensor counts",
+          expect: "match",
+        });
+      }
+    }
 
     it("interior matches scipy.signal.filtfilt", () => {
-      expect(maxAbsDiff(y, c.scipy, EDGE, x.length - EDGE)).toBeLessThan(1e-5 * scale);
+      expect(maxAbsDiff(y, c.scipy, EDGE, x.length - EDGE)).toBeLessThan(1e-6 * scale);
     });
 
-    // filter.ts says odd padding keeps "the filter's transient out of the
-    // result", but with 3*order samples of padding and a zero initial state it
-    // does not: SciPy also seeds each pass with the step-response steady
-    // state (lfilter_zi; cf. Gustafsson 1996). Divergence D6.
-    divergence("[divergence] edges match scipy.signal.filtfilt", () => {
-      expect(maxAbsDiff(y, c.scipy)).toBeLessThan(1e-5 * scale);
+    // Odd padding alone leaves the start-up transient in the result; SciPy
+    // also seeds each pass with the step-response steady state (lfilter_zi;
+    // cf. Gustafsson 1996), and so does filtfilt. Closed D6.
+    it("edges match scipy.signal.filtfilt", () => {
+      expect(maxAbsDiff(y, c.scipy)).toBeLessThan(1e-6 * scale);
     });
   });
 
   describe.each(ff.sosCases)("$id (cascade)", (c) => {
     const x = Float32Array.from(inputs[c.signal].channels[0]);
-    const y = filtfiltCascade(c.sections, x);
+    const y = sosfiltfilt(c.sections, x);
     rec.record(`sosfiltfilt:${c.id}`, y);
     const scale = rmsOf(c.scipy);
 
-    it("interior matches scipy.signal.sosfiltfilt", () => {
-      // Zero-phase passes of LTI sections commute, so filtering section by
-      // section equals filtering the cascade -- away from the edges.
-      expect(maxAbsDiff(y, c.scipy, 2 * EDGE, x.length - 2 * EDGE)).toBeLessThan(1e-5 * scale);
-    });
-
-    divergence("[divergence] edges match scipy.signal.sosfiltfilt", () => {
-      expect(maxAbsDiff(y, c.scipy)).toBeLessThan(1e-5 * scale);
+    it("matches scipy.signal.sosfiltfilt, edges included", () => {
+      // The whole cascade runs forward then backward, each section seeded at
+      // its own steady state, as in sosfiltfilt.
+      expect(maxAbsDiff(y, c.scipy)).toBeLessThan(1e-6 * scale);
     });
   });
 });

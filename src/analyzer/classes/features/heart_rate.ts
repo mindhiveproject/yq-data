@@ -6,7 +6,8 @@ import {
 } from "../../../data_stream.interface";
 import { Accepts, BaseAnalyzer } from "../../base_analyzer";
 import { getChannelCount, deinterleave } from "../../../utility";
-import { designFilter, filtfiltCascade } from "../../methods/filter";
+import { sosfiltfilt } from "../../methods/filter";
+import { designFilter } from "../../methods/filter_design";
 import { detrend } from "../../methods/stats";
 import { spectrum, dominantFrequency } from "../../methods/fft";
 import {
@@ -103,11 +104,12 @@ export class HeartRate extends BaseAnalyzer {
       kind: "bandpass",
       cutoff: [lowHz, highHz],
       samplingRate: rate,
-      order: 4,
+      // SciPy's N: a 4-pole band filter, run twice by the zero-phase pass.
+      order: 2,
     });
     // Zero phase matters here: a phase shift moves the detected peaks, which
     // is exactly the quantity being measured.
-    const pulse = filtfiltCascade(sections, detrended);
+    const pulse = sosfiltfilt(sections, detrended);
 
     let estimate = 0;
     let sdnn = 0;

@@ -9,6 +9,7 @@
     "build": "tsup",
     "prepare": "npm run build",
     "test": "jest --config jest.config.ts",
+    "golden:report": "rm -rf tests/unit/golden/report/measured; GOLDEN_REPORT=1 jest --config jest.config.ts tests/unit/golden --json --outputFile=tests/unit/golden/report/results.json; GOLDEN_STRICT=1 jest --config jest.config.ts tests/unit/golden --json --outputFile=tests/unit/golden/report/strict.json >/dev/null 2>&1; python3 tests/unit/golden/report.py",
     "test:e2e": "jest --config jest.e2e.config.ts"
   },
   "repository": {

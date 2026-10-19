@@ -79,3 +79,41 @@ describe("golden: Windowing vs sliding-window framing", () => {
     }
   );
 });
+
+describe("golden: Windowing lag over time", () => {
+  it("never emits more frames than a plain sliding window has", () => {
+    // Muse packets into a 2 s window with a 0.04 s hop: the frames the node
+    // has emitted so far against the frames a plain sliding window would have.
+    const c: Config = { signal: "eeg_dc_drift_30s", size: 512, hop: 10, packet: 12, why: "" };
+    const fs = inputs[c.signal].fs;
+    const node = new Windowing({ size: c.size, hop: c.hop, unit: "samples" });
+    const time: number[] = [];
+    const lag: number[] = [];
+    let emitted = 0;
+    let received = 0;
+    for (const p of packetStream(c.signal, c.packet)) {
+      if (node.analyze(p)) emitted++;
+      received += p.data.length / inputs[c.signal].channels.length;
+      const expected = Math.max(0, Math.floor((received - c.size) / c.hop) + 1);
+      time.push(received / fs);
+      lag.push(((expected - emitted) * c.hop) / fs);
+    }
+    rec.compare({
+      id: "windowing:lag",
+      group: "Windowing",
+      title: "Lag behind real time, 2 s window with a 0.04 s hop on 12-sample Muse packets",
+      note: "Seconds of data waiting in the queue: frames a sliding window would have produced, minus frames the node has emitted.",
+      kind: "line",
+      x: time,
+      series: [
+        { name: "Ideal", role: "reference", values: lag.map(() => 0) },
+        { name: "Package", role: "package", values: lag },
+      ],
+      xLabel: "Streaming time (s)",
+      yLabel: "Lag (s)",
+      unit: " s",
+      expect: "diverges",
+    });
+    expect(Math.min(...lag)).toBeGreaterThanOrEqual(0);
+  });
+});

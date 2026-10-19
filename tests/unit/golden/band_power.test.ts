@@ -93,6 +93,30 @@ describe.each(golden.cases)("golden: BandPower on $signal", (c) => {
   describe("against the field standard (YASA bandpower)", () => {
     const yasaRelative = c.yasa.relativeChannelAverage;
 
+    afterAll(() => {
+      // The figure: the same signal through three pipelines. Declared once the
+      // tests have run so it does not depend on which of them are divergences.
+      rec.compare({
+        id: `relative:${c.signal}`,
+        group: "Band power",
+        title: `Relative band power, ${c.signal} (channel average)`,
+        note: "Share of total power per band. The default configuration averages amplitudes, so its \"relative\" is not a share of power.",
+        kind: "bars",
+        categories: Object.keys(c.bands),
+        series: [
+          { name: "Package default", role: "package", values: run({ relative: true }).data },
+          {
+            name: "Package psd + sum",
+            role: "package",
+            values: run({ window: "hamming", scaling: "psd", aggregate: "sum", relative: true }).data,
+          },
+          { name: "YASA bandpower", role: "field", values: yasaRelative },
+        ],
+        yLabel: "Share of total",
+        expect: "diverges",
+      });
+    });
+
     it(`psd + sum + relative agrees with YASA within ${YASA_RELATIVE_ATOL}`, () => {
       for (const window of ["hann", "hamming"] as const) {
         const out = run({ window, scaling: "psd", aggregate: "sum", relative: true });

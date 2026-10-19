@@ -320,7 +320,7 @@ length a visible property of the pipeline. Anything spectral needs one upstream.
 | Method | Class | Does |
 |---|---|---|
 | `WINDOWING` | `Windowing` | Buffers into fixed, optionally overlapping windows |
-| `FILTERING` | `Filtering` | Butterworth low/high/band/stop, stateful across packets |
+| `FILTERING` | `Filtering` | Butterworth (`scipy.signal.butter`) or windowed-sinc FIR (`firwin`) low/high/band/stop, stateful across packets |
 | `NORMALIZATION` | `Normalization` | Min-max, z-score, fixed range, or a decaying running range |
 | `CHANNEL_SELECTION` | `ChannelSelection` | Pick or average channels by index or label |
 | `FFT` / `PSD` | `SpectrumAnalyzer` | Per-channel spectrum |
@@ -584,10 +584,11 @@ Everything under `analyzer/methods` is a pure function over plain arrays, usable
 without any packet, receiver or pipeline:
 
 ```ts
-import { spectrum, bandAverage, designFilter, filtfiltCascade } from "yq-data";
+import { spectrum, bandAverage, butter, sosfiltfilt } from "yq-data";
 
-const sections = designFilter({ kind: "bandpass", cutoff: [1, 40], samplingRate: 256, order: 4 });
-const clean = filtfiltCascade(sections, signal);
+// Same call, same coefficients as scipy.signal.butter(4, [1, 40], "bandpass", fs=256, output="sos")
+const sos = butter(4, [1, 40], { btype: "bandpass", fs: 256, output: "sos" });
+const clean = sosfiltfilt(sos, signal);        // scipy.signal.sosfiltfilt
 const spec = spectrum(clean, { samplingRate: 256, window: "hamming" });
 const alpha = bandAverage(spec, 8, 12);
 ```
