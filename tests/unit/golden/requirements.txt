@@ -3,3 +3,7 @@
 #   python tests/unit/golden/generate.py
 numpy~=2.1
 scipy~=1.14
+# Field-standard pipelines used as references. Pinned exactly: their
+# algorithms (peak detection, Welch defaults) feed fixture values directly.
+neurokit2==0.2.13
+yasa==0.7.0

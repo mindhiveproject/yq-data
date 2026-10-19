@@ -1,0 +1,174 @@
+{
+  "generatedBy": {
+    "python": "3.12.9",
+    "numpy": "2.1.3",
+    "scipy": "1.14.1",
+    "neurokit2": "0.2.13",
+    "yasa": "0.7.0"
+  },
+  "reference": {
+    "definitions": "neurokit2.hrv_time(truth_peaks, sampling_rate) -> HRV_SDNN (ddof=1), HRV_RMSSD; median rate = median(60/IBI) within [40, 200] bpm",
+    "groundTruth": "systolic maxima of the noise-free synthetic waveform (inputs.py _ppg)",
+    "pipeline": "neurokit2.ppg_process default (Elgendi 2013)"
+  },
+  "windowSeconds": 10.0,
+  "matchToleranceSeconds": 0.15,
+  "cases": [
+    {
+      "signal": "ppg_muse_60bpm",
+      "samplingRate": 64.0,
+      "truthBeats": [28, 93, 160, 221, 283, 349, 414, 475, 536, 602, 670, 732, 794, 860, 927, 990, 1051, 1116, 1183, 1244, 1305, 1370, 1438, 1500, 1561, 1628, 1695, 1756, 1817, 1883],
+      "truthRate": 60.03234501347709,
+      "definitions": {
+        "medianRate": 59.07692307692308,
+        "sdnnMs": 41.23062455469176,
+        "rmssdMs": 58.38877839075147
+      },
+      "neurokit": {
+        "call": "neurokit2.ppg_process(x, sampling_rate=64)  # elgendi clean + peaks",
+        "peaks": [27, 93, 160, 222, 284, 349, 414, 476, 536, 601, 670, 732, 795, 860, 927, 989, 1051, 1115, 1182, 1244, 1305, 1370, 1437, 1500, 1560, 1628, 1694, 1756, 1818, 1883]
+      },
+      "windows": [
+        {
+          "start": 0,
+          "stop": 640,
+          "truthBeats": [28, 93, 160, 221, 283, 349, 414, 475, 536, 602],
+          "truthMedianRate": 59.07692307692308,
+          "truthMeanRate": 60.20905923344948,
+          "neurokitMedianRate": 59.07692307692308
+        },
+        {
+          "start": 640,
+          "stop": 1280,
+          "truthBeats": [30, 92, 154, 220, 287, 350, 411, 476, 543, 604],
+          "truthMedianRate": 60.95238095238095,
+          "truthMeanRate": 60.20905923344948,
+          "neurokitMedianRate": 60.95238095238095
+        },
+        {
+          "start": 1280,
+          "stop": 1920,
+          "truthBeats": [25, 90, 158, 220, 281, 348, 415, 476, 537, 603],
+          "truthMedianRate": 59.07692307692308,
+          "truthMeanRate": 59.79238754325259,
+          "neurokitMedianRate": 59.07692307692308
+        }
+      ]
+    },
+    {
+      "signal": "ppg_muse_75bpm_offset",
+      "samplingRate": 64.0,
+      "truthBeats": [37, 89, 142, 193, 242, 292, 346, 399, 450, 498, 547, 600, 655, 705, 754, 805, 859, 912, 962, 1011, 1061, 1116, 1168, 1219, 1267, 1318, 1371, 1425, 1475, 1523, 1574, 1626, 1679, 1730, 1779, 1828, 1882],
+      "truthRate": 74.92682926829268,
+      "definitions": {
+        "medianRate": 75.29411764705883,
+        "sdnnMs": 32.211762700137974,
+        "rmssdMs": 40.40116909553131
+      },
+      "neurokit": {
+        "call": "neurokit2.ppg_process(x, sampling_rate=64)  # elgendi clean + peaks",
+        "peaks": [36, 89, 143, 193, 242, 293, 346, 400, 449, 497, 547, 600, 655, 705, 754, 805, 859, 912, 962, 1011, 1062, 1116, 1169, 1219, 1267, 1318, 1371, 1424, 1474, 1523, 1574, 1626, 1679, 1730, 1779, 1828, 1882]
+      },
+      "windows": [
+        {
+          "start": 0,
+          "stop": 640,
+          "truthBeats": [37, 89, 142, 193, 242, 292, 346, 399, 450, 498, 547, 600],
+          "truthMedianRate": 75.29411764705883,
+          "truthMeanRate": 75.02664298401422,
+          "neurokitMedianRate": 75.29411764705883
+        },
+        {
+          "start": 640,
+          "stop": 1280,
+          "truthBeats": [15, 65, 114, 165, 219, 272, 322, 371, 421, 476, 528, 579, 627],
+          "truthMedianRate": 76.04705882352941,
+          "truthMeanRate": 75.29411764705883,
+          "neurokitMedianRate": 76.04705882352941
+        },
+        {
+          "start": 1280,
+          "stop": 1920,
+          "truthBeats": [38, 91, 145, 195, 243, 294, 346, 399, 450, 499, 548, 602],
+          "truthMedianRate": 75.29411764705883,
+          "truthMeanRate": 74.8936170212766,
+          "neurokitMedianRate": 75.29411764705883
+        }
+      ]
+    },
+    {
+      "signal": "ppg_muse_110bpm_noisy",
+      "samplingRate": 64.0,
+      "truthBeats": [25, 60, 97, 133, 168, 202, 237, 271, 307, 342, 378, 413, 447, 481, 515, 550, 586, 621, 657, 691, 725, 760, 794, 829, 866, 902, 936, 971, 1004, 1038, 1074, 1109, 1145, 1180, 1214, 1248, 1282, 1317, 1352, 1389, 1424, 1459, 1494, 1528, 1562, 1597, 1633, 1669, 1704, 1738, 1773, 1807, 1843, 1878],
+      "truthRate": 109.83270372369131,
+      "definitions": {
+        "medianRate": 109.71428571428571,
+        "sdnnMs": 14.360577576003013,
+        "rmssdMs": 18.385887669204752
+      },
+      "neurokit": {
+        "call": "neurokit2.ppg_process(x, sampling_rate=64)  # elgendi clean + peaks",
+        "peaks": [25, 60, 97, 133, 168, 203, 236, 271, 306, 343, 378, 413, 447, 482, 515, 550, 586, 621, 656, 691, 726, 760, 794, 830, 865, 902, 936, 970, 1004, 1038, 1073, 1109, 1144, 1180, 1214, 1249, 1282, 1317, 1352, 1389, 1424, 1459, 1493, 1528, 1562, 1598, 1634, 1669, 1704, 1738, 1773, 1807, 1843, 1877]
+      },
+      "windows": [
+        {
+          "start": 0,
+          "stop": 640,
+          "truthBeats": [25, 60, 97, 133, 168, 202, 237, 271, 307, 342, 378, 413, 447, 481, 515, 550, 586, 621],
+          "truthMedianRate": 109.71428571428571,
+          "truthMeanRate": 109.53020134228187,
+          "neurokitMedianRate": 109.71428571428571
+        },
+        {
+          "start": 640,
+          "stop": 1280,
+          "truthBeats": [17, 51, 85, 120, 154, 189, 226, 262, 296, 331, 364, 398, 434, 469, 505, 540, 574, 608],
+          "truthMedianRate": 109.71428571428571,
+          "truthMeanRate": 110.45685279187818,
+          "neurokitMedianRate": 109.71428571428571
+        },
+        {
+          "start": 1280,
+          "stop": 1920,
+          "truthBeats": [2, 37, 72, 109, 144, 179, 214, 248, 282, 317, 353, 389, 424, 458, 493, 527, 563, 598],
+          "truthMedianRate": 109.71428571428571,
+          "truthMeanRate": 109.53020134228187,
+          "neurokitMedianRate": 109.71428571428571
+        }
+      ]
+    },
+    {
+      "signal": "rppg_camera_72bpm",
+      "samplingRate": 30.0,
+      "truthBeats": [15, 41, 67, 92, 115, 140, 166, 192, 216, 240, 266, 292, 318, 342, 366, 391, 417, 443, 467, 491, 517, 543, 568],
+      "truthRate": 71.60940325497286,
+      "definitions": {
+        "medianRate": 70.61538461538461,
+        "sdnnMs": 33.00706120614331,
+        "rmssdMs": 41.78554470186728
+      },
+      "neurokit": {
+        "call": "neurokit2.ppg_process(x, sampling_rate=30)  # elgendi clean + peaks",
+        "peaks": [13, 41, 65, 77, 114, 141, 167, 192, 217, 266, 292, 303, 319, 344, 364, 391, 416, 444, 467, 492, 520, 544, 567, 591]
+      },
+      "windows": [
+        {
+          "start": 0,
+          "stop": 300,
+          "truthBeats": [15, 41, 67, 92, 115, 140, 166, 192, 216, 240, 266, 292],
+          "truthMedianRate": 69.23076923076923,
+          "truthMeanRate": 71.48014440433212,
+          "neurokitMedianRate": 69.23076923076923
+        },
+        {
+          "start": 300,
+          "stop": 600,
+          "truthBeats": [18, 42, 66, 91, 117, 143, 167, 191, 217, 243, 268],
+          "truthMedianRate": 72.0,
+          "truthMeanRate": 72.0,
+          "neurokitMedianRate": 73.5
+        }
+      ]
+    }
+  ]
+}

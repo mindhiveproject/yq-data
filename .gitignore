@@ -8,3 +8,5 @@
 /dist
 # Python bytecode from the golden-value generator
 /tests/unit/golden/__pycache__/
+# Comparison report output (GOLDEN_REPORT=1 + report.py); regenerate, do not commit
+/tests/unit/golden/report/

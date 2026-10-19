@@ -41,6 +41,7 @@ interface RmsDoc {
     expected: number[];
     expectedFromFloat32: number[];
     expectedDbfs: number[];
+    expectedDbfsAes17: number[];
   }[];
 }
 
@@ -72,6 +73,20 @@ describe("golden: RMS vs NumPy", () => {
   it("fixtures carry a recorded toolchain", () => {
     expect(golden.generatedBy.numpy).toMatch(/^\d+\.\d+/);
     expect(golden.generatedBy.python).toMatch(/^\d+\.\d+/);
+  });
+
+  // Convention, pinned rather than flagged: dbfs() references RMS to 1.0, so
+  // a full-scale sine reads 20*log10(1/sqrt(2)) = -3.01 dBFS. AES17 defines
+  // dBFS so that the same sine reads 0 dBFS (a full-scale square then reads
+  // +3.01). Both are in use -- Audacity and Smaart follow the package's --
+  // so this only needs to be stated where dBFS is shown. Convention C3.
+  it("full-scale sine reads -3.01 dBFS (AES17 would read 0 dBFS)", () => {
+    const tone = golden.cases.find((c) => c.signal === "aes17_full_scale_997hz")!;
+    const result = new RMSAnalyzer({ decibels: true }).analyze(packetFor(tone.signal));
+    // 4800 samples hold 99.7 cycles of 997 Hz, so the RMS is ~3e-3 dB off
+    // the ideal 1/sqrt(2); the tolerance allows for that.
+    expect(Array.from(result!.data)).toBeAllClose([-3.0103], { atol: 5e-3 });
+    expect(tone.expectedDbfsAes17).toBeAllClose([0], { atol: 5e-3 });
   });
 
   describe.each(golden.cases)("$signal", (testCase) => {

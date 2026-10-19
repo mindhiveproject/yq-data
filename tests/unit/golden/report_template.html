@@ -1,0 +1,430 @@
+<title>yq-data Golden Values</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a single reading column, like a lab notebook page. Findings first,
+   then one figure per divergence, then the conformance ledger. */
+:root {
+  --page: #f6f7f8;
+  --surface: #fcfcfb;
+  --ink: #0e1116;
+  --ink-2: #4a5160;
+  --muted: #7d8492;
+  --rule: #dfe2e7;
+  --axis: #c3c7cf;
+  --grid: #e8eaee;
+  --code-bg: #eceff3;
+  --s1: #2a78d6;  /* package */
+  --s2: #eb6834;  /* reference */
+  --s3: #1baf7a;  /* field standard / truth */
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0f1114; --surface: #17191d; --ink: #eef0f3; --ink-2: #b9bfca; --muted: #8a909b;
+    --rule: #2a2e35; --axis: #3a3f47; --grid: #23262c; --code-bg: #22262c;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0f1114; --surface: #17191d; --ink: #eef0f3; --ink-2: #b9bfca; --muted: #8a909b;
+  --rule: #2a2e35; --axis: #3a3f47; --grid: #23262c; --code-bg: #22262c;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  color-scheme: dark;
+}
+body {
+  background: var(--page); color: var(--ink); font-family: var(--font-body);
+  font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 860px; margin: 0 auto; display: grid; gap: 48px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 21px; font-weight: 600; }
+h3 { font-size: 15px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code { font-family: var(--font-data); font-size: 0.88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+.eyebrow { font-family: var(--font-data); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+header { display: grid; gap: 12px; }
+.lede { font-size: 17px; color: var(--ink-2); }
+.provenance { font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+section { display: grid; gap: 16px; }
+.section-head { display: grid; gap: 6px; }
+.caption { color: var(--ink-2); }
+.figure { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.multiples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 640px) { .multiples { grid-template-columns: 1fr; } }
+.panel { display: grid; gap: 4px; min-width: 0; }
+.panel-title { font-size: 13px; color: var(--ink-2); font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.key { width: 16px; height: 3px; border-radius: 2px; display: inline-block; }
+.key.box { width: 10px; height: 10px; border-radius: 2px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { font-family: var(--font-data); font-size: 10.5px; fill: var(--muted); }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: var(--font-data); color: var(--ink); box-shadow: 0 4px 14px rgba(0,0,0,0.12); white-space: nowrap; z-index: 2; }
+.tip .row { display: flex; align-items: center; gap: 6px; }
+.table-wrap { overflow-x: auto; min-width: 0; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0.03em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-data); }
+details { font-size: 13.5px; }
+summary { cursor: pointer; color: var(--ink-2); }
+summary:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; border-radius: 4px; }
+pre { font-family: var(--font-data); font-size: 12.5px; background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 0; }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">Golden-value suite · tests/unit/golden</div>
+    <h1>yq-data Golden Values</h1>
+    <p class="lede">The package's signal processing, checked against SciPy, YASA and NeuroKit2 and against synthetic signals with known ground truth. Most of it matches to float precision. This page charts the five divergences that change the numbers most.</p>
+    <div class="provenance" id="provenance"></div>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">D1 · Filter design</div>
+      <h2>Band filters are not Butterworth</h2>
+      <p class="caption">Low-pass and high-pass match <code>scipy.signal.butter</code> to 1e-15. Band-pass and band-stop are built from identical RBJ biquads at the centre frequency, so the cutoffs sit near −6 dB instead of −3 dB and the passband sags. Package order 4 is compared with <code>butter(2, band)</code>, which has the same pole count.</p>
+    </div>
+    <div class="figure">
+      <div class="legend"><span><i class="key" style="background:var(--s1)"></i>Package designFilter</span><span><i class="key" style="background:var(--s2)"></i>scipy.signal.butter</span></div>
+      <div class="multiples" id="filters"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">D6 · Zero-phase filtering</div>
+      <h2>filtfilt edges start from zero</h2>
+      <p class="caption">Synthetic Muse PPG on a raw-sensor offset of 1.2×10⁵ counts, 3 Hz low-pass, zero-phase. SciPy seeds each pass with the steady-state response, while the package starts from a zero state. The interior agrees to about 1e-6. At the ends the package is off by up to 8,265 counts against a pulse peak-to-peak of 912.</p>
+    </div>
+    <div class="figure">
+      <div class="legend"><span><i class="key" style="background:var(--s1)"></i>Package filtfilt</span><span><i class="key" style="background:var(--s2)"></i>scipy.signal.filtfilt</span></div>
+      <div class="multiples" id="edges"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">D2 · BandPower</div>
+      <h2>Default relative band power is not a share of power</h2>
+      <p class="caption">Synthetic 4-channel Muse EEG, 4 s window, averaged across channels. The defaults average spectral amplitude, so <code>relative: true</code> gives each band's share of mean amplitude. Switching to <code>scaling: "psd"</code> with <code>aggregate: "sum"</code> lands within 0.03 of YASA.</p>
+    </div>
+    <div class="figure">
+      <div class="legend" id="bp-legend"></div>
+      <div class="chart" id="bandpower"></div>
+      <details><summary>Show values</summary><div class="table-wrap"><table id="bp-table"></table></div></details>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">D7 · HeartRate</div>
+      <h2>Edge false beats inflate HRV</h2>
+      <p class="caption">SDNN per 10 s window, from the HeartRate node and from the true beat locations of each synthetic signal. Each false beat sits within 0.1 s of a window boundary. The median-based rate absorbs it and stays within 1.5 bpm. SDNN and RMSSD take every interval as given, with no normal-to-normal cleaning.</p>
+    </div>
+    <div class="figure">
+      <div class="legend"><span><i class="key box" style="background:var(--s1)"></i>Package SDNN</span><span><i class="key box" style="background:var(--s3)"></i>True-beat SDNN</span></div>
+      <div class="chart" id="sdnn"></div>
+      <details><summary>Show values</summary><div class="table-wrap"><table id="sdnn-table"></table></div></details>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">D9 · Windowing</div>
+      <h2>Windowing falls behind real time</h2>
+      <p class="caption">Muse sends 12 EEG samples per packet. A 2 s window with a 0.04 s hop (10 samples) has more than one new frame per packet, but the node emits one window per packet, so the surplus queues up. The line replays that rule for a minute of streaming. In the test, 30 s of data produced <span id="frames"></span>.</p>
+    </div>
+    <div class="figure">
+      <div class="chart" id="lag"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Reproduce</h2>
+      <p class="caption">The full list of divergences, with suggested directions, is under Open Gaps in the package spec. Methods and references are in <code>tests/unit/golden/README.md</code>.</p>
+    </div>
+<pre>npx jest tests/unit/golden                     # green; divergences are expected failures
+GOLDEN_STRICT=1 npx jest tests/unit/golden     # print each measured gap
+GOLDEN_REPORT=1 npx jest tests/unit/golden &amp;&amp; python tests/unit/golden/report.py</pre>
+  </section>
+</main>
+
+<script>
+const DATA = /*__DATA__*/null;
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function el(tag, attrs = {}, parent) {
+  const node = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+function niceTicks(lo, hi, count = 5) {
+  const span = hi - lo;
+  const step0 = span / count;
+  const mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+  const ticks = [];
+  for (let t = Math.ceil(lo / step) * step; t <= hi + step * 1e-9; t += step) ticks.push(+t.toFixed(10));
+  return ticks;
+}
+
+function fmt(v, digits = 3) {
+  const a = Math.abs(v);
+  if (a >= 1e4) return Math.round(v).toLocaleString("en-US");
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  return v.toPrecision(digits);
+}
+
+function makeTip(container) {
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  tip.hidden = true;
+  container.appendChild(tip);
+  return tip;
+}
+
+function placeTip(tip, container, x, y) {
+  const box = container.getBoundingClientRect();
+  tip.hidden = false;
+  const w = tip.offsetWidth;
+  let left = x + 12;
+  if (left + w > box.width) left = x - w - 12;
+  tip.style.left = Math.max(0, left) + "px";
+  tip.style.top = Math.max(0, y - 10) + "px";
+}
+
+function lineChart(container, opts) {
+  const W = 600, H = opts.height || 300;
+  const m = { l: 56, r: 14, t: 10, b: 38 };
+  const all = opts.series.flatMap((s) => s.points);
+  const xs = all.map((p) => p[0]);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = opts.yMin ?? Math.min(...all.map((p) => p[1]));
+  let y1 = opts.yMax ?? Math.max(...all.map((p) => p[1]));
+  if (opts.yMin === undefined || opts.yMax === undefined) {
+    const pad = (y1 - y0) * 0.06 || 1;
+    if (opts.yMin === undefined) y0 -= pad;
+    if (opts.yMax === undefined) y1 += pad;
+  }
+  const fx = opts.xLog ? (x) => Math.log10(x) : (x) => x;
+  const sx = (x) => m.l + ((fx(x) - fx(x0)) / (fx(x1) - fx(x0))) * (W - m.l - m.r);
+  const sy = (y) => m.t + (1 - (Math.min(y1, Math.max(y0, y)) - y0) / (y1 - y0)) * (H - m.t - m.b);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.label });
+
+  const yt = opts.yTicks || niceTicks(y0, y1, 5);
+  for (const t of yt) {
+    el("line", { x1: m.l, x2: W - m.r, y1: sy(t), y2: sy(t), style: "stroke:var(--grid)", "stroke-width": 1 }, svg);
+    const tx = el("text", { x: m.l - 6, y: sy(t) + 3.5, "text-anchor": "end" }, svg);
+    tx.textContent = opts.yFormat ? opts.yFormat(t) : fmt(t);
+  }
+  const xt = opts.xLog
+    ? [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100].filter((t) => t >= x0 && t <= x1)
+    : niceTicks(x0, x1, 6);
+  for (const t of xt) {
+    el("line", { x1: sx(t), x2: sx(t), y1: H - m.b, y2: H - m.b + 4, style: "stroke:var(--axis)" }, svg);
+    const tx = el("text", { x: sx(t), y: H - m.b + 16, "text-anchor": "middle" }, svg);
+    tx.textContent = fmt(t, 2);
+  }
+  el("line", { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, style: "stroke:var(--axis)" }, svg);
+  const xl = el("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }, svg);
+  xl.textContent = opts.xLabel;
+  const yl = el("text", { x: 12, y: (m.t + H - m.b) / 2, "text-anchor": "middle", transform: `rotate(-90 12 ${(m.t + H - m.b) / 2})` }, svg);
+  yl.textContent = opts.yLabel;
+
+  for (const r of opts.refLines || []) {
+    if (r.axis === "y") {
+      el("line", { x1: m.l, x2: W - m.r, y1: sy(r.value), y2: sy(r.value), style: "stroke:var(--muted)", "stroke-width": 1, "stroke-dasharray": "3 3" }, svg);
+      const t = el("text", { x: W - m.r - 2, y: sy(r.value) - 4, "text-anchor": "end" }, svg);
+      t.textContent = r.label;
+    } else {
+      el("line", { x1: sx(r.value), x2: sx(r.value), y1: m.t, y2: H - m.b, style: "stroke:var(--axis)", "stroke-width": 1 }, svg);
+    }
+  }
+
+  for (const s of opts.series) {
+    const d = s.points.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join("");
+    el("path", { d, fill: "none", style: `stroke:${s.color}`, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  }
+
+  const cross = el("line", { y1: m.t, y2: H - m.b, style: "stroke:var(--axis)", visibility: "hidden" }, svg);
+  const dots = opts.series.map((s) => el("circle", { r: 4, style: `fill:${s.color};stroke:var(--surface)`, "stroke-width": 2, visibility: "hidden" }, svg));
+  const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }, svg);
+  container.appendChild(svg);
+  const tip = makeTip(container);
+
+  function nearest(points, x) {
+    let lo = 0, hi = points.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (points[mid][0] < x) lo = mid; else hi = mid; }
+    return Math.abs(points[lo][0] - x) < Math.abs(points[hi][0] - x) ? points[lo] : points[hi];
+  }
+  hit.addEventListener("pointermove", (e) => {
+    const box = svg.getBoundingClientRect();
+    const px = ((e.clientX - box.left) / box.width) * W;
+    const frac = (px - m.l) / (W - m.l - m.r);
+    const xv = opts.xLog ? 10 ** (fx(x0) + frac * (fx(x1) - fx(x0))) : x0 + frac * (x1 - x0);
+    const hits = opts.series.map((s) => nearest(s.points, xv));
+    cross.setAttribute("x1", sx(hits[0][0])); cross.setAttribute("x2", sx(hits[0][0]));
+    cross.setAttribute("visibility", "visible");
+    hits.forEach((p, i) => { dots[i].setAttribute("cx", sx(p[0])); dots[i].setAttribute("cy", sy(p[1])); dots[i].setAttribute("visibility", "visible"); });
+    tip.innerHTML = `<div>${opts.xName} ${fmt(hits[0][0], 3)}</div>` + opts.series.map((s, i) =>
+      `<div class="row"><i class="key" style="background:${s.color}"></i>${s.name}: ${fmt(hits[i][1], 4)}${opts.unit || ""}</div>`).join("");
+    placeTip(tip, container, (sx(hits[0][0]) / W) * box.width, e.clientY - box.top);
+  });
+  hit.addEventListener("pointerleave", () => {
+    tip.hidden = true; cross.setAttribute("visibility", "hidden");
+    dots.forEach((d) => d.setAttribute("visibility", "hidden"));
+  });
+}
+
+function roundedBar(x, y, w, h) {
+  const r = Math.min(4, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+
+function barChart(container, opts) {
+  const W = 600, H = opts.height || 280;
+  const m = { l: 48, r: 8, t: 10, b: opts.twoLineLabels ? 46 : 32 };
+  const max = Math.max(...opts.series.flatMap((s) => s.values));
+  const yt = niceTicks(0, max * 1.05, 5);
+  const y1 = yt[yt.length - 1];
+  const sy = (v) => m.t + (1 - v / y1) * (H - m.t - m.b);
+  const band = (W - m.l - m.r) / opts.categories.length;
+  const n = opts.series.length;
+  const bw = Math.min(24, (band * 0.72 - 2 * (n - 1)) / n);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.label });
+  for (const t of yt) {
+    el("line", { x1: m.l, x2: W - m.r, y1: sy(t), y2: sy(t), style: "stroke:var(--grid)" }, svg);
+    const tx = el("text", { x: m.l - 6, y: sy(t) + 3.5, "text-anchor": "end" }, svg);
+    tx.textContent = opts.yFormat ? opts.yFormat(t) : fmt(t);
+  }
+  const yl = el("text", { x: 11, y: (m.t + H - m.b) / 2, "text-anchor": "middle", transform: `rotate(-90 11 ${(m.t + H - m.b) / 2})` }, svg);
+  yl.textContent = opts.yLabel;
+  const tip = makeTip(container);
+  opts.categories.forEach((cat, ci) => {
+    const cx = m.l + band * ci + band / 2;
+    const group = n * bw + 2 * (n - 1);
+    opts.series.forEach((s, si) => {
+      const v = s.values[ci];
+      const x = cx - group / 2 + si * (bw + 2);
+      const path = el("path", { d: roundedBar(x, sy(v), bw, sy(0) - sy(v)), style: `fill:${s.color}` }, svg);
+      const hit = el("rect", { x: x - 1, y: m.t, width: bw + 2, height: H - m.t - m.b, fill: "transparent" }, svg);
+      hit.addEventListener("pointerenter", (e) => {
+        path.style.opacity = "0.8";
+        tip.innerHTML = `<div>${cat}</div><div class="row"><i class="key box" style="background:${s.color}"></i>${s.name}: ${opts.valueFormat(v)}</div>`;
+        const box = svg.getBoundingClientRect();
+        placeTip(tip, container, ((x + bw) / W) * box.width, ((sy(v)) / H) * box.height);
+      });
+      hit.addEventListener("pointerleave", () => { path.style.opacity = ""; tip.hidden = true; });
+    });
+    const lines = opts.twoLineLabels ? cat.split(" · ") : [cat];
+    lines.forEach((line, li) => {
+      const t = el("text", { x: cx, y: H - m.b + 15 + li * 13, "text-anchor": "middle" }, svg);
+      t.textContent = line;
+    });
+  });
+  el("line", { x1: m.l, x2: W - m.r, y1: sy(0), y2: sy(0), style: "stroke:var(--axis)" }, svg);
+  container.insertBefore(svg, tip);
+}
+
+function table(id, head, rows, numeric = []) {
+  const t = document.getElementById(id);
+  t.innerHTML = "<thead><tr>" + head.map((h, i) => `<th class="${numeric.includes(i) ? "num" : ""}">${h}</th>`).join("") + "</tr></thead><tbody>" +
+    rows.map((r) => "<tr>" + r.map((c, i) => `<td class="${numeric.includes(i) ? "num" : ""}">${c}</td>`).join("") + "</tr>").join("") + "</tbody>";
+}
+
+function render() {
+  if (!DATA) return;
+  const g = DATA.generatedBy;
+  document.getElementById("provenance").textContent =
+    `References: Python ${g.python} · NumPy ${g.numpy} · SciPy ${g.scipy} · NeuroKit2 ${g.neurokit2} · YASA ${g.yasa}`;
+
+
+  const filters = document.getElementById("filters");
+  for (const f of DATA.filters) {
+    const panel = document.createElement("div"); panel.className = "panel";
+    panel.innerHTML = `<div class="panel-title">${f.title}</div>`;
+    const chart = document.createElement("div"); chart.className = "chart"; panel.appendChild(chart);
+    filters.appendChild(panel);
+    const xs = f.package.map((p) => p[0]);
+    const cut = f.cutoff;
+    const lo = Math.max(xs[0], cut[0] / 8), hi = Math.min(xs[xs.length - 1], cut[1] * 4);
+    const clip = (pts) => pts.filter((p) => p[0] >= lo && p[0] <= hi);
+    lineChart(chart, {
+      label: `${f.title}: magnitude response`, height: 260, xLog: true, xName: "f (Hz)", unit: " dB",
+      xLabel: "Frequency (Hz)", yLabel: "Gain (dB)", yMin: -30, yMax: 2, yTicks: [-30, -20, -10, -6, -3, 0],
+      series: [
+        { name: "SciPy", color: "var(--s2)", points: clip(f.reference) },
+        { name: "Package", color: "var(--s1)", points: clip(f.package) },
+      ],
+      refLines: [{ axis: "y", value: -3.0103, label: "−3 dB" }, { axis: "x", value: cut[0] }, { axis: "x", value: cut[1] }],
+    });
+  }
+
+  const edges = document.getElementById("edges");
+  for (const e of DATA.edges) {
+    const panel = document.createElement("div"); panel.className = "panel";
+    panel.innerHTML = `<div class="panel-title">${e.title}</div>`;
+    const chart = document.createElement("div"); chart.className = "chart"; panel.appendChild(chart);
+    edges.appendChild(panel);
+    lineChart(chart, {
+      label: `filtfilt ${e.title}`, height: 260, xName: "t (s)", xLabel: "Time (s)", yLabel: "Sensor counts",
+      yFormat: (v) => (v / 1000).toFixed(0) + "K",
+      series: [
+        { name: "SciPy", color: "var(--s2)", points: e.reference },
+        { name: "Package", color: "var(--s1)", points: e.package },
+      ],
+    });
+  }
+
+  const bp = DATA.bandPower;
+  const bpColors = ["var(--s1)", "var(--s2)", "var(--s3)"];
+  document.getElementById("bp-legend").innerHTML = bp.series.map((s, i) =>
+    `<span><i class="key box" style="background:${bpColors[i]}"></i>${s.name}</span>`).join("");
+  barChart(document.getElementById("bandpower"), {
+    label: "Relative band power by band", categories: bp.bands, yLabel: "Share of total",
+    valueFormat: (v) => v.toFixed(3), yFormat: (v) => v.toFixed(2),
+    series: bp.series.map((s, i) => ({ ...s, color: bpColors[i] })),
+  });
+  table("bp-table", ["Band", ...bp.series.map((s) => s.name)],
+    bp.bands.map((b, i) => [b, ...bp.series.map((s) => s.values[i].toFixed(3))]), [1, 2, 3]);
+
+  const sd = DATA.sdnn;
+  barChart(document.getElementById("sdnn"), {
+    label: "SDNN per window", categories: sd.windows, yLabel: "SDNN (ms)", twoLineLabels: true, height: 300,
+    valueFormat: (v) => v.toFixed(1) + " ms",
+    series: [
+      { name: "Package", color: "var(--s1)", values: sd.package },
+      { name: "True beats", color: "var(--s3)", values: sd.truth },
+    ],
+  });
+  table("sdnn-table", ["Window", "Package (ms)", "True beats (ms)", "Ratio"],
+    sd.windows.map((w, i) => [w, sd.package[i].toFixed(1), sd.truth[i].toFixed(1), (sd.package[i] / sd.truth[i]).toFixed(2) + "×"]), [1, 2, 3]);
+
+  const f = DATA.frames;
+  document.getElementById("frames").textContent =
+    `${f.emitted} of ${f.expected} windows and ended ${f.lagSecondsAtEnd.toFixed(1)} s behind`;
+  lineChart(document.getElementById("lag"), {
+    label: "Windowing lag over time", height: 240, xName: "t (s)", unit: " s",
+    xLabel: "Streaming time (s)", yLabel: "Lag (s)", yMin: 0,
+    series: [{ name: "Lag", color: "var(--s1)", points: DATA.lag }],
+  });
+
+}
+render();
+</script>

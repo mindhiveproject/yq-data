@@ -4,8 +4,9 @@
 #   conda activate yq-golden
 #   python tests/unit/golden/generate.py
 #
-# scipy is here now so the environment is ready for the next methods (Welch PSD,
-# filtering, ...). mne will be added when the first EEG-specific method needs it.
+# numpy/scipy are the conformance references. neurokit2 (PPG/HRV) and yasa
+# (EEG band power) are the field-standard pipelines; they are pinned exactly
+# because their algorithms feed fixture values directly.
 name: yq-golden
 channels:
   - conda-forge
@@ -13,3 +14,5 @@ dependencies:
   - python=3.12
   - numpy=2.1
   - scipy=1.14
+  - neurokit2=0.2.13
+  - yasa=0.7.0

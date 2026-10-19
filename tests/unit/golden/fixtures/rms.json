@@ -1,73 +1,138 @@
 {
   "generatedBy": {
     "python": "3.12.9",
-    "numpy": "1.26.4",
-    "scipy": "1.12.0"
+    "numpy": "2.1.3",
+    "scipy": "1.14.1",
+    "neurokit2": "0.2.13",
+    "yasa": "0.7.0"
   },
-  "reference": "numpy: sqrt(mean(x**2)); dBFS = 20*log10(rms) relative to 1.0, floor -100",
+  "reference": "numpy: sqrt(mean(x**2)); dBFS = 20*log10(rms) relative to 1.0, floor -100; AES17 dBFS = 20*log10(rms*sqrt(2))",
   "cases": [
     {
       "signal": "sine_10hz_unit",
-      "expected": [
-        0.7071067811865476
-      ],
-      "expectedFromFloat32": [
-        0.707106779055462
-      ],
-      "expectedDbfs": [
-        -3.010299982817433
-      ]
+      "expected": [0.7071067811865476],
+      "expectedFromFloat32": [0.707106779055462],
+      "expectedDbfs": [-3.010299982817433],
+      "expectedDbfsAes17": [-2.6177619945918183e-08]
     },
     {
       "signal": "dc_offset",
-      "expected": [
-        0.5
-      ],
-      "expectedFromFloat32": [
-        0.5
-      ],
-      "expectedDbfs": [
-        -6.020599913279624
-      ]
+      "expected": [0.5],
+      "expectedFromFloat32": [0.5],
+      "expectedDbfs": [-6.020599913279624],
+      "expectedDbfsAes17": [-3.0102999566398116]
     },
     {
       "signal": "white_noise_unit",
-      "expected": [
-        0.9884870567352049
-      ],
-      "expectedFromFloat32": [
-        0.9884870572411579
-      ],
-      "expectedDbfs": [
-        -0.10058025498887177
-      ]
+      "expected": [0.9884870567352049],
+      "expectedFromFloat32": [0.9884870572411579],
+      "expectedDbfs": [-0.10058025498887177],
+      "expectedDbfsAes17": [2.90971970165094]
     },
     {
       "signal": "two_tone_offset",
-      "expected": [
-        0.8916277250063502
-      ],
-      "expectedFromFloat32": [
-        0.8916277263927872
-      ],
-      "expectedDbfs": [
-        -0.9963286999291704
-      ]
+      "expected": [0.8916277250063502],
+      "expectedFromFloat32": [0.8916277263927872],
+      "expectedDbfs": [-0.9963286999291704],
+      "expectedDbfsAes17": [2.0139712567106427]
     },
     {
       "signal": "stereo_tones",
-      "expected": [
-        0.7071067811865476,
-        0.35355339059327356
-      ],
-      "expectedFromFloat32": [
-        0.7071067867425153,
-        0.3535533911781233
-      ],
-      "expectedDbfs": [
-        -3.0102998883919554,
-        -9.0308998555512
-      ]
+      "expected": [0.7071067811865476, 0.35355339059327356],
+      "expectedFromFloat32": [0.7071067867425153, 0.3535533911781233],
+      "expectedDbfs": [-3.0102998883919554, -9.0308998555512],
+      "expectedDbfsAes17": [6.824785764389998e-08, -6.020599898911387]
+    },
+    {
+      "signal": "sine_8hz_bin_centred",
+      "expected": [1.4142135623730951],
+      "expectedFromFloat32": [1.4142135364145405],
+      "expectedDbfs": [3.0102997972062244],
+      "expectedDbfsAes17": [6.020599753846037]
+    },
+    {
+      "signal": "eeg_muse_4s",
+      "expected": [10.348123789433993, 11.944731158555413, 13.209518955362448, 10.100554583164268],
+      "expectedFromFloat32": [10.3481237823899, 11.944731141984677, 13.209518934914373, 10.100554577577094],
+      "expectedDbfs": [20.297232300556463, 21.543527577546236, 22.417740034778994, 20.086904393215992],
+      "expectedDbfsAes17": [23.307532257196275, 24.55382753418605, 25.428039991418807, 23.097204349855804]
+    },
+    {
+      "signal": "eeg_openbci_2s",
+      "expected": [12.000898616492712],
+      "expectedFromFloat32": [12.000898611813412],
+      "expectedDbfs": [21.584275333519845],
+      "expectedDbfsAes17": [24.594575290159657]
+    },
+    {
+      "signal": "eeg_dc_drift_30s",
+      "expected": [5019.23511104752],
+      "expectedFromFloat32": [5019.235107999982],
+      "expectedDbfs": [74.01275078240229],
+      "expectedDbfsAes17": [77.0230507390421]
+    },
+    {
+      "signal": "ppg_muse_60bpm",
+      "expected": [0.6420613069110429],
+      "expectedFromFloat32": [0.6420613070139335],
+      "expectedDbfs": [-3.848470029692751],
+      "expectedDbfsAes17": [-0.8381700730529383]
+    },
+    {
+      "signal": "ppg_muse_75bpm_offset",
+      "expected": [120217.10049494989],
+      "expectedFromFloat32": [120217.10046844436],
+      "expectedDbfs": [101.59932497910005],
+      "expectedDbfsAes17": [104.60962493573986]
+    },
+    {
+      "signal": "ppg_muse_110bpm_noisy",
+      "expected": [0.6280156900985416],
+      "expectedFromFloat32": [0.628015690306458],
+      "expectedDbfs": [-4.040590114797784],
+      "expectedDbfsAes17": [-1.0302901581579718]
+    },
+    {
+      "signal": "rppg_camera_72bpm",
+      "expected": [120.32065300589277],
+      "expectedFromFloat32": [120.32065296626733],
+      "expectedDbfs": [41.6068036023977],
+      "expectedDbfsAes17": [44.61710355903751]
+    },
+    {
+      "signal": "corr_a",
+      "expected": [1.1831369021684124, 1.0568881399757033],
+      "expectedFromFloat32": [1.1831369044516842, 1.0568881416108173],
+      "expectedDbfs": [1.4607000220229072, 0.4805805020264606],
+      "expectedDbfsAes17": [4.47099997866272, 3.4908804586662727]
+    },
+    {
+      "signal": "corr_b",
+      "expected": [3.1817801027347112, 1.4414827083378108],
+      "expectedFromFloat32": [3.1817800951749935, 1.4414827054874562],
+      "expectedDbfs": [10.053403212356633, 3.1761887241977234],
+      "expectedDbfsAes17": [13.063703168996446, 6.1864886808375354]
+    },
+    {
+      "signal": "corr_b_short",
+      "expected": [3.1431022130657618, 1.4353217919318864],
+      "expectedFromFloat32": [3.143102206637413, 1.4353217903388633],
+      "expectedDbfs": [9.947170070602564, 3.1389855628856966],
+      "expectedDbfsAes17": [12.957470027242374, 6.14928551952551]
+    },
+    {
+      "signal": "corr_a_tail_shift",
+      "expected": [2.596024846864192, 2.5863488007941653],
+      "expectedFromFloat32": [2.5960248559791483, 2.5863488041025975],
+      "expectedDbfs": [8.2861769271499, 8.253741899532143],
+      "expectedDbfsAes17": [11.296476883789712, 11.264041856171955]
+    },
+    {
+      "signal": "aes17_full_scale_997hz",
+      "expected": [0.7068751923803596],
+      "expectedFromFloat32": [0.7068751923547637],
+      "expectedDbfs": [-3.0131451910061764],
+      "expectedDbfsAes17": [-0.0028452343663632335]
     }
   ]
 }
