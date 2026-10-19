@@ -3,8 +3,9 @@ import {
   VisionReceiver,
   VisionAssetOptions,
   FACE_BOX_CHANNELS,
-  pointChannels,
+  pointStreamMetadata,
 } from "./base_vision";
+import { FACE_API_68 } from "../../../draw/face_topology";
 
 /**
  * Where face-api's weight files are fetched from.
@@ -254,7 +255,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
         name: this.nameFor("landmarks", face),
         additionalMetadata: {
           samplingRate: this.assets.maxFps,
-          channelInfo: pointChannels(LANDMARK_POINTS, ["x", "y"]),
+          ...pointStreamMetadata(LANDMARK_POINTS, ["x", "y"], FACE_API_68),
         },
       });
     }

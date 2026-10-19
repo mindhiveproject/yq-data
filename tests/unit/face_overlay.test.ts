@@ -15,6 +15,13 @@ import {
   faceStreamKey,
   frameTransform,
   headPoseAxes,
+  FACE_API_68,
+  FACE_API_68_OUTLINE,
+  MEDIAPIPE_FACE_478,
+  MEDIAPIPE_FACE_CONTOURS,
+  MEDIAPIPE_FACE_MESH,
+  metaToWire,
+  topologyEdges,
 } from "../../src";
 
 const video = {} as HTMLVideoElement;
@@ -94,7 +101,7 @@ describe("FaceLandmarkReceiver geometry", () => {
     ]);
   });
 
-  it("declares landmarks as 1434 labelled channels", async () => {
+  it("declares landmarks as 1434 channels with a compact point layout", async () => {
     const face = withVision(
       new FaceLandmarkReceiver(video, { emitHeadPose: false, emitLandmarks: true }),
       fakeMediaPipe({ faceBlendshapes: blendshapes, faceLandmarks: [points] })
@@ -103,12 +110,13 @@ describe("FaceLandmarkReceiver geometry", () => {
 
     const meta = face.streamMeta.get("face-landmarker:video:inferred:landmarks")!;
     expect(meta.channelCount).toBe(1434);
-    expect(meta.channelInfo!.slice(0, 4).map((c) => c.label)).toEqual([
-      "0 x",
-      "0 y",
-      "0 z",
-      "1 x",
-    ]);
+    expect(meta.channelInfo).toBeUndefined();
+    expect(meta.additionalMetadata).toEqual({
+      pointComponents: ["x", "y", "z"],
+      topology: MEDIAPIPE_FACE_478,
+    });
+    // What every network consumer is re-sent each few seconds.
+    expect(JSON.stringify(meta).length).toBeLessThan(1000);
   });
 
   it("head_pose round-trips into the overlay's axes", async () => {
@@ -201,6 +209,7 @@ describe("FaceEmotionReceiver geometry", () => {
 
     const landmarks = seen.find((p) => p.streamID.endsWith(":landmarks"))!;
     expect(landmarks.data).toHaveLength(136);
+    expect(landmarks.metadata.additionalMetadata?.topology).toBe(FACE_API_68);
     expect(Array.from(landmarks.data.slice(0, 2))).toEqual([0.5, 0.5]);
   });
 });
@@ -231,6 +240,21 @@ describe("frameTransform", () => {
     const stretched = { scaleX: 800, scaleY: 400, offsetX: 0, offsetY: 0 };
     expect(frameTransform(frame, view, "fill")).toEqual(stretched);
     expect(frameTransform(undefined, view, "cover")).toEqual(stretched);
+  });
+});
+
+describe("face topology", () => {
+  it("indexes only points the models produce", () => {
+    expect(Math.max(...MEDIAPIPE_FACE_CONTOURS, ...MEDIAPIPE_FACE_MESH)).toBe(477);
+    expect(Math.max(...FACE_API_68_OUTLINE)).toBe(67);
+    expect(MEDIAPIPE_FACE_MESH).toHaveLength(2556 * 2);
+  });
+
+  it("is looked up by the name the stream carries", () => {
+    expect(topologyEdges(MEDIAPIPE_FACE_478)).toBe(MEDIAPIPE_FACE_CONTOURS);
+    expect(topologyEdges(MEDIAPIPE_FACE_478, "mesh")).toBe(MEDIAPIPE_FACE_MESH);
+    expect(topologyEdges(FACE_API_68, "mesh")).toBe(FACE_API_68_OUTLINE);
+    expect(topologyEdges("something-else")).toBeUndefined();
   });
 });
 
@@ -305,6 +329,31 @@ describe("FaceOverlay", () => {
       expect.closeTo(160, 3),
       expect.closeTo(240, 3),
     ]);
+  });
+
+  it("joins landmarks named by a topology that crossed the wire", () => {
+    const { canvas, calls } = fakeCanvas();
+    const overlay = new FaceOverlay(canvas, { layers: { landmarks: false } });
+    const streamID = "face-emotion:video:inferred:landmarks";
+    const sent = metaToWire({
+      streamID,
+      modality: "video" as any,
+      channelCount: 136,
+      additionalMetadata: { pointComponents: ["x", "y"], topology: FACE_API_68 },
+    });
+    const received = JSON.parse(JSON.stringify(sent)).metadata;
+
+    overlay.push({
+      streamID,
+      timestamp: 0,
+      data: new Float32Array(136).fill(0.5),
+      metadata: received,
+    });
+    overlay.draw();
+
+    const moves = calls.filter(([name]) => name === "moveTo").length;
+    expect(moves).toBe(FACE_API_68_OUTLINE.length / 2);
+    expect(calls.filter(([name]) => name === "stroke")).toHaveLength(1);
   });
 
   it("stops drawing a face once its stream goes quiet", () => {

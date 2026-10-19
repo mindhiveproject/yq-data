@@ -2,6 +2,7 @@ import { Subscription } from "rxjs";
 import { DataPacket } from "../data_stream.interface";
 import { BaseReceiver } from "../receiver/base_receiver";
 import { AUTO_STALE_INTERVALS } from "../manager/manager";
+import { FaceTopologyDetail, topologyEdges } from "./face_topology";
 
 /**
  * How the video frame is fitted into the element the overlay covers — the
@@ -33,8 +34,15 @@ export interface FaceOverlayOptions {
   layers?: {
     /** `face_box`. */
     box?: boolean;
-    /** `landmarks`. */
+    /** `landmarks`, as points. */
     landmarks?: boolean;
+    /**
+     * `landmarks`, joined by the model's own edges: `"contours"` (the
+     * default) outlines eyes, brows, lips, irises and face; `"mesh"` draws
+     * the full 2556-edge triangulation, which is far heavier to stroke.
+     * Streams whose topology is unknown draw as points only.
+     */
+    connections?: FaceTopologyDetail | false;
     /** `head_pose`, as axes at the face's centre. */
     headPose?: boolean;
     /** The strongest `expressions` score, above the box. */
@@ -163,8 +171,13 @@ export function faceStreamKey(
   };
 }
 
-/** Components per point in a landmark stream, read from its channel labels. */
+/**
+ * Components per point in a landmark stream: from `pointComponents` when the
+ * source declared it, else from channel labels like pose's "nose x", else 3.
+ */
 function pointStride(packet: DataPacket): number {
+  const components = packet.metadata.additionalMetadata?.pointComponents;
+  if (Array.isArray(components) && components.length > 0) return components.length;
   const info = packet.metadata.channelInfo;
   const second = info?.findIndex((c, i) => i > 0 && c.label.endsWith(" x"));
   return second !== undefined && second > 0 ? second : 3;
@@ -178,7 +191,9 @@ function pointStride(packet: DataPacket): number {
  * {@link FaceLandmarkReceiver} or {@link FaceEmotionReceiver} and from a
  * `RemoteStreamReceiver` carrying their streams from another machine. Turn on
  * the geometry it needs at the source — `emitFaceBox`, `emitLandmarks`,
- * `emitHeadPose`.
+ * `emitHeadPose`. Landmarks are joined using the edge lists in
+ * `face_topology`, chosen by the topology the stream names, so the edges
+ * themselves never travel with the data.
  *
  * Coordinates are normalized to the video frame; the overlay maps them onto
  * the canvas using the video's `object-fit`, so the canvas should cover the
@@ -309,7 +324,14 @@ export class FaceOverlay {
     t: FrameTransform
   ): void {
     const ctx = this.ctx;
-    const show = { box: true, landmarks: true, headPose: true, label: true, ...this.options.layers };
+    const show = {
+      box: true,
+      landmarks: true,
+      connections: "contours" as FaceTopologyDetail | false,
+      headPose: true,
+      label: true,
+      ...this.options.layers,
+    };
     const style = {
       color: "#00e0a0",
       lineWidth: 2,
@@ -333,6 +355,28 @@ export class FaceOverlay {
       for (let i = 0; i + 1 < points.data.length; i += stride) {
         ctx.fillRect(toX(points.data[i]) - size / 2, toY(points.data[i + 1]) - size / 2, size, size);
       }
+    }
+
+    const edges =
+      show.connections && points
+        ? topologyEdges(points.metadata.additionalMetadata?.topology, show.connections)
+        : undefined;
+    if (edges && points) {
+      // One path for every edge: a stroke per edge is what makes the full
+      // mesh expensive, not the edges themselves.
+      const stride = pointStride(points);
+      const data = points.data;
+      ctx.beginPath();
+      for (let e = 0; e + 1 < edges.length; e += 2) {
+        const a = edges[e] * stride;
+        const b = edges[e + 1] * stride;
+        if (b + 1 >= data.length || a + 1 >= data.length) continue;
+        ctx.moveTo(toX(data[a]), toY(data[a + 1]));
+        ctx.lineTo(toX(data[b]), toY(data[b + 1]));
+      }
+      ctx.lineWidth = Math.max(1, style.lineWidth / 2);
+      ctx.stroke();
+      ctx.lineWidth = style.lineWidth;
     }
 
     // The box in canvas pixels, from `face_box` or else the landmarks' extent;

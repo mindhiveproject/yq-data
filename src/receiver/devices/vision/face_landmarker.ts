@@ -4,8 +4,9 @@ import {
   VisionAssetOptions,
   DEFAULT_WASM_PATH,
   FACE_BOX_CHANNELS,
-  pointChannels,
+  pointStreamMetadata,
 } from "./base_vision";
+import { MEDIAPIPE_FACE_478 } from "../../../draw/face_topology";
 
 const DEFAULT_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
@@ -175,7 +176,11 @@ export class FaceLandmarkReceiver extends VisionReceiver {
         name: nameFor("landmarks"),
         additionalMetadata: {
           samplingRate: this.assets.maxFps,
-          channelInfo: pointChannels(FACE_MESH_POINTS, ["x", "y", "z"]),
+          ...pointStreamMetadata(
+            FACE_MESH_POINTS,
+            ["x", "y", "z"],
+            MEDIAPIPE_FACE_478
+          ),
         },
       });
     }

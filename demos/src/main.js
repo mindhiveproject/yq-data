@@ -281,7 +281,8 @@ document.getElementById("camera-connect").addEventListener("click", async () => 
     // these faces from a RemoteStreamReceiver on another machine.
     faceOverlay = new FaceOverlay(document.getElementById("face-overlay"), {
       video,
-      layers: { box: false },
+      // Contours by default; `connections: "mesh"` draws the full triangulation.
+      layers: { box: false, landmarks: false },
     });
     faceOverlay.attach(face);
     faceOverlay.start();

@@ -1,4 +1,8 @@
-import { ChannelInfo, Modality } from "../../../data_stream.interface";
+import {
+  ChannelInfo,
+  Modality,
+  StreamMetadata,
+} from "../../../data_stream.interface";
 import { BaseReceiver } from "../../base_receiver";
 
 /** Where the MediaPipe wasm runtime and model files are fetched from. */
@@ -28,22 +32,24 @@ export const FACE_BOX_CHANNELS: ChannelInfo[] = [
 ];
 
 /**
- * Channel info for a flattened point list, labelled "0 x", "0 y", "1 x"….
+ * Layout of a stream of `count` points flattened to `components` each, as in
+ * `[x0, y0, z0, x1, …]`.
  *
- * The labels are what tell a consumer the stride — an overlay finds where the
- * second point's "x" starts — so 2-D and 3-D landmark streams can share code.
+ * Deliberately not one `channelInfo` entry per value: for the 478-point face
+ * mesh that is 43 KB of labels, re-announced to every network consumer every
+ * few seconds. `pointComponents` gives the stride in a few bytes, and
+ * `topology` names the model the points come from so a drawing side can look
+ * up how they connect (see `topologyEdges`).
  */
-export function pointChannels(
+export function pointStreamMetadata(
   count: number,
-  components: string[]
-): ChannelInfo[] {
-  const channels: ChannelInfo[] = [];
-  for (let point = 0; point < count; point++) {
-    for (const component of components) {
-      channels.push({ index: channels.length, label: `${point} ${component}` });
-    }
-  }
-  return channels;
+  components: string[],
+  topology: string
+): Partial<StreamMetadata> {
+  return {
+    channelCount: count * components.length,
+    additionalMetadata: { pointComponents: components, topology },
+  };
 }
 
 /**
