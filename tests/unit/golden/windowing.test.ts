@@ -6,14 +6,21 @@
  * `librosa.util.frame`) returns. Simple enough to compute here, so there is no
  * Python fixture; the signals still come from `_inputs.json`.
  *
- * `[divergence]` tests use `divergence` (= `it.failing`); see README.md.
+ * Both delivery modes are held to it:
+ * - `frames: "all"` emits every frame, in order -- offline framing, streamed.
+ * - `frames: "latest"` (the default) emits, after each packet, the newest
+ *   frame that packet completed, and skips older ones. It never falls more
+ *   than one hop behind the input, and when the hop is at least a packet it
+ *   emits exactly what `"all"` does.
  */
 import "./allclose";
-import { Windowing } from "../../../src";
-import { divergence, inputs, packetStream, recorder } from "./harness";
+import { DataPacket, Windowing } from "../../../src";
+import { inputs, packetFor, recorder } from "./harness";
 
 const rec = recorder("windowing");
 afterAll(() => rec.flush());
+
+type Frames = "latest" | "all";
 
 interface Config {
   signal: string;
@@ -23,15 +30,49 @@ interface Config {
   why: string;
 }
 
-/** Streams a signal through a Windowing node and collects every window. */
-function stream({ signal, size, hop, packet }: Config) {
-  const node = new Windowing({ size, hop, unit: "samples" });
-  const windows: number[][] = [];
-  for (const p of packetStream(signal, packet)) {
-    const out = node.analyze(p);
-    if (out) windows.push(Array.from(out.data));
+interface Emitted {
+  /** Window contents, first channel. */
+  data: number[];
+  /** Samples per channel received when the window was emitted. */
+  received: number;
+  timestamp: number;
+  packetRate: number;
+}
+
+/**
+ * The signal cut into device-sized packets, each stamped in milliseconds with
+ * the time of its last sample, as `DataPacket.timestamp` is defined.
+ */
+function devicePackets(signal: string, packet: number): DataPacket[] {
+  const { fs, channels } = inputs[signal];
+  const n = channels[0].length;
+  const out: DataPacket[] = [];
+  for (let start = 0; start < n; start += packet) {
+    const stop = Math.min(n, start + packet);
+    out.push({ ...packetFor(signal, { samples: [start, stop] }), timestamp: ((stop - 1) / fs) * 1000 });
   }
-  return windows;
+  return out;
+}
+
+/** Streams a signal through a Windowing node and collects every window. */
+function stream({ signal, size, hop, packet }: Config, frames: Frames): Emitted[] {
+  const node = new Windowing({ size, hop, unit: "samples", frames });
+  const channels = inputs[signal].channels.length;
+  const out: Emitted[] = [];
+  let received = 0;
+  for (const p of devicePackets(signal, packet)) {
+    received += p.data.length / channels;
+    const result = node.analyze(p);
+    for (const w of result ? [result].flat() : []) {
+      out.push({
+        data: Array.from({ length: size }, (_, i) => w.data[i * channels]),
+        received,
+        timestamp: w.timestamp,
+        packetRate: w.metadata.additionalMetadata?.packetRate,
+      });
+    }
+  }
+  return out;
 }
 
 const frame = (signal: string, k: number, size: number, hop: number) =>
@@ -40,80 +81,127 @@ const frame = (signal: string, k: number, size: number, hop: number) =>
 const frameCount = (signal: string, size: number, hop: number) =>
   Math.floor((inputs[signal].channels[0].length - size) / hop) + 1;
 
+/** Index of the newest frame complete after `received` samples. */
+const newestFrame = (received: number, size: number, hop: number) =>
+  Math.floor((received - size) / hop);
+
+/** Time in ms of the last sample of frame k. */
+const frameEnd = (signal: string, k: number, size: number, hop: number) =>
+  ((k * hop + size - 1) / inputs[signal].fs) * 1000;
+
 const configs: Config[] = [
   { signal: "white_noise_unit", size: 256, hop: 256, packet: 12, why: "no overlap, Muse packets" },
   { signal: "white_noise_unit", size: 256, hop: 64, packet: 12, why: "75% overlap, Muse packets" },
   { signal: "white_noise_unit", size: 512, hop: 128, packet: 128, why: "hop = packet" },
   { signal: "eeg_dc_drift_30s", size: 512, hop: 10, packet: 12, why: "2 s window, 0.04 s hop, Muse" },
+  { signal: "eeg_dc_drift_30s", size: 512, hop: 1, packet: 12, why: "one-sample hop, Muse" },
 ];
 
-describe("golden: Windowing vs sliding-window framing", () => {
-  it.each(configs)("$why: each emitted window is the next frame, in order", (c) => {
-    const windows = stream(c);
-    windows.forEach((w, k) => expect(w).toBeAllClose(frame(c.signal, k, c.size, c.hop), { rtol: 0 }));
+describe('golden: Windowing frames: "all" vs sliding-window framing', () => {
+  it.each(configs)("$why: emits every frame, in order", (c) => {
+    const windows = stream(c, "all");
+    expect(windows.length).toBe(frameCount(c.signal, c.size, c.hop));
+    windows.forEach((w, k) => expect(w.data).toBeAllClose(frame(c.signal, k, c.size, c.hop), { rtol: 0 }));
+  });
+
+  it.each(configs)("$why: each window is stamped with its last sample's time", (c) => {
+    const windows = stream(c, "all");
+    expect(windows.map((w) => w.timestamp)).toBeAllClose(
+      windows.map((_, k) => frameEnd(c.signal, k, c.size, c.hop)),
+      { rtol: 1e-12, atol: 1e-9 }
+    );
+  });
+
+  it.each(configs)("$why: packetRate is rate / hop", (c) => {
+    for (const w of stream(c, "all")) expect(w.packetRate).toBeCloseTo(inputs[c.signal].fs / c.hop, 9);
+  });
+});
+
+describe('golden: Windowing frames: "latest" (default) vs sliding-window framing', () => {
+  it.each(configs)("$why: each window is the newest frame complete at that point", (c) => {
+    for (const w of stream(c, "latest")) {
+      const k = newestFrame(w.received, c.size, c.hop);
+      expect(w.data).toBeAllClose(frame(c.signal, k, c.size, c.hop), { rtol: 0 });
+    }
+  });
+
+  it.each(configs)("$why: never falls a hop behind the input", (c) => {
+    const windows = stream(c, "latest");
+    // A window per packet once the buffer fills, or per hop when the hop is longer.
+    const packetsAfterFill = Math.ceil(
+      (inputs[c.signal].channels[0].length - c.size + 1) / Math.max(c.hop, c.packet)
+    );
+    expect(windows.length).toBeGreaterThanOrEqual(packetsAfterFill - 1);
+    for (const w of windows) {
+      const k = newestFrame(w.received, c.size, c.hop);
+      expect(w.received - (k * c.hop + c.size)).toBeLessThan(c.hop);
+    }
+  });
+
+  it.each(configs)("$why: each window is stamped with its last sample's time", (c) => {
+    for (const w of stream(c, "latest")) {
+      const k = newestFrame(w.received, c.size, c.hop);
+      expect([w.timestamp]).toBeAllClose([frameEnd(c.signal, k, c.size, c.hop)], { rtol: 1e-12, atol: 1e-9 });
+    }
+  });
+
+  it.each(configs)("$why: packetRate is the rate windows actually arrive at", (c) => {
+    const windows = stream(c, "latest");
+    const fs = inputs[c.signal].fs;
+    const span = (windows[windows.length - 1].received - windows[0].received) / fs;
+    const observed = (windows.length - 1) / span;
+    expect([windows[windows.length - 1].packetRate]).toBeAllClose([observed], { rtol: 0.02 });
+    expect(windows[0].packetRate).toBeCloseTo(fs / Math.max(c.hop, c.packet), 9);
   });
 
   const hopAtLeastPacket = configs.filter((c) => c.hop >= c.packet);
-  it.each(hopAtLeastPacket)("$why: emits every frame when hop >= packet size", (c) => {
-    expect(stream(c).length).toBe(frameCount(c.signal, c.size, c.hop));
+  it.each(hopAtLeastPacket)('$why: same windows as "all" when hop >= packet size', (c) => {
+    const latest = stream(c, "latest");
+    const all = stream(c, "all");
+    expect(latest.length).toBe(all.length);
+    latest.forEach((w, k) => expect(w.data).toEqual(all[k].data));
   });
-
-  // analyze() returns at most one packet per input packet, so when a packet
-  // carries more than one hop of new samples the surplus frames queue in the
-  // buffer and are never caught up: latency grows by (packet - hop) samples
-  // per packet. Muse at 256 Hz with a 0.04 s hop falls ~10 s behind per
-  // minute. Divergence D9.
-  const hopBelowPacket = configs.filter((c) => c.hop < c.packet);
-  divergence.each(hopBelowPacket)(
-    "[divergence] $why: emits every frame when hop < packet size",
-    (c) => {
-      const emitted = stream(c).length;
-      const expected = frameCount(c.signal, c.size, c.hop);
-      const fs = inputs[c.signal].fs;
-      rec.record(`frames:${c.signal}:${c.size}:${c.hop}:${c.packet}`, {
-        emitted,
-        expected,
-        lagSecondsAtEnd: ((expected - emitted) * c.hop) / fs,
-      });
-      expect(emitted).toBe(expected);
-    }
-  );
 });
 
 describe("golden: Windowing lag over time", () => {
-  it("never emits more frames than a plain sliding window has", () => {
-    // Muse packets into a 2 s window with a 0.04 s hop: the frames the node
-    // has emitted so far against the frames a plain sliding window would have.
-    const c: Config = { signal: "eeg_dc_drift_30s", size: 512, hop: 10, packet: 12, why: "" };
+  it("neither mode falls behind real time", () => {
+    // Muse packets into a 2 s window with a 0.04 s hop: how old the newest
+    // window a consumer has seen is, against the newest sample received.
+    const c = configs.find((k) => k.hop === 10)!;
     const fs = inputs[c.signal].fs;
-    const node = new Windowing({ size: c.size, hop: c.hop, unit: "samples" });
-    const time: number[] = [];
-    const lag: number[] = [];
-    let emitted = 0;
-    let received = 0;
-    for (const p of packetStream(c.signal, c.packet)) {
-      if (node.analyze(p)) emitted++;
-      received += p.data.length / inputs[c.signal].channels.length;
-      const expected = Math.max(0, Math.floor((received - c.size) / c.hop) + 1);
-      time.push(received / fs);
-      lag.push(((expected - emitted) * c.hop) / fs);
-    }
+    const lagOf = (frames: Frames) => {
+      const time: number[] = [];
+      const lag: number[] = [];
+      for (const w of stream(c, frames)) {
+        const k = newestFrame(w.received, c.size, c.hop);
+        const shown = Math.round(((w.timestamp / 1000) * fs - (c.size - 1)) / c.hop);
+        time.push(w.received / fs);
+        lag.push(((k - shown) * c.hop + (w.received - (k * c.hop + c.size))) / fs);
+      }
+      return { time, lag };
+    };
+    const latest = lagOf("latest");
+    const all = lagOf("all");
     rec.compare({
       id: "windowing:lag",
       group: "Windowing",
       title: "Lag behind real time, 2 s window with a 0.04 s hop on 12-sample Muse packets",
-      note: "Seconds of data waiting in the queue: frames a sliding window would have produced, minus frames the node has emitted.",
+      note: "Age of each emitted window's last sample when it is emitted. Both modes stay under one hop; \"all\" emits some windows in pairs.",
       kind: "line",
-      x: time,
+      x: latest.time,
       series: [
-        { name: "Ideal", role: "reference", values: lag.map(() => 0) },
-        { name: "Package", role: "package", values: lag },
+        { name: "Ideal", role: "reference", values: latest.lag.map(() => 0) },
+        { name: "Package (latest)", role: "package", values: latest.lag },
+        { name: "Package (all)", role: "package", values: all.lag, x: all.time },
       ],
       xLabel: "Streaming time (s)",
       yLabel: "Lag (s)",
       unit: " s",
-      expect: "diverges",
+      expect: "match",
     });
-    expect(Math.min(...lag)).toBeGreaterThanOrEqual(0);
+    const hop = c.hop / fs;
+    expect(Math.max(...latest.lag)).toBeLessThan(hop);
+    // An "all" burst's older window is one hop older than the newest.
+    expect(Math.max(...all.lag)).toBeLessThan(2 * hop);
   });
 });

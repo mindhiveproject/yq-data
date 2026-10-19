@@ -4,11 +4,8 @@
  *
  * Fixture: `stats.json` (see `ref_stats.py` for the exact reference calls).
  *
- * Tests named `[divergence] ...` use `divergence` (= `it.failing`): each asserts the
- * reference behaviour and is *expected to fail* today, documenting a measured
- * gap. If one starts passing, Jest reports it -- the gap was closed, so drop
- * the `.failing`. Each names its divergence ID (D1-D10), tracked in the
- * Open Gaps list of the package spec; see README.md.
+ * No open divergences remain here; a new one would use `divergence`
+ * (= `it.failing`) and name its ID, as README.md describes.
  */
 import "./allclose";
 import {
@@ -29,7 +26,6 @@ import {
 } from "../../../src";
 import {
   channelsOf,
-  divergence,
   fixture,
   inputs,
   maxAbs,
@@ -224,10 +220,11 @@ describe("golden: Pearson correlation vs scipy.stats.pearsonr", () => {
     );
   });
 
-  // The node documents "computed over the shorter of the two windows", but
-  // stats.ts `correlation` takes each mean over the *whole* array before
-  // summing over the overlap. Divergence D8.
-  divergence("[divergence] unequal window lengths: r over the overlap", () => {
+  // The node documents "computed over the shorter of the two windows". Both
+  // windows end at their newest sample, so the overlap is the newest samples
+  // of each, and both means are taken over it. Was divergence D8 (means over
+  // each whole array, products over the overlap only).
+  it("unequal window lengths: r over the newest-sample overlap", () => {
     const out = new Correlation({ mode: "paired" }).analyze({
       a: packetFor(unequal.a),
       b: packetFor(unequal.b),

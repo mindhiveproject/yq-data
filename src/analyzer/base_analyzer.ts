@@ -213,6 +213,9 @@ export abstract class AbstractAnalyzer {
  * `analyze` returns `null` when the node has consumed the packet but has
  * nothing to emit yet — the normal case for buffering nodes such as
  * windowing, which only produce output once a full window has accumulated.
+ * It may return several packets when one input completes more than one
+ * output (windowing with `frames: "all"`); the pipeline forwards them in
+ * order.
  */
 export abstract class BaseAnalyzer<
   In extends TypedArray = Float32Array,
@@ -221,7 +224,9 @@ export abstract class BaseAnalyzer<
   /** What this analyzer will accept on its single input. */
   abstract readonly accepts: Accepts;
 
-  abstract analyze(packet: DataPacket<In>): DataPacket<Out> | null;
+  abstract analyze(
+    packet: DataPacket<In>
+  ): DataPacket<Out> | DataPacket<Out>[] | null;
 }
 
 /** How a multi-input node pairs packets arriving on different ports. */

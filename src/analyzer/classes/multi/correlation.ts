@@ -23,7 +23,9 @@ export interface CorrelationParameters extends SyncParameters {
  * Correlation between two streams.
  *
  * Both inputs must be windowed, and the correlation is computed over the
- * shorter of the two windows.
+ * shorter of the two windows. A window ends at its newest sample, so when the
+ * lengths differ the longer one is trimmed from its oldest end: the samples
+ * compared are the ones that overlap in time.
  *
  * Pairing is left on the default `latest` policy. The stricter `timestamp`
  * and `nearest` policies are available, but note what they can and cannot buy
@@ -52,10 +54,14 @@ export class Correlation extends MultiInputAnalyzer {
     const b = packets.b;
     if (!a || !b) return null;
 
-    const channelsA = deinterleave(a.data, getChannelCount(a));
-    const channelsB = deinterleave(b.data, getChannelCount(b));
+    let channelsA = deinterleave(a.data, getChannelCount(a));
+    let channelsB = deinterleave(b.data, getChannelCount(b));
     if (channelsA.length === 0 || channelsB.length === 0) return null;
-    if (channelsA[0].length < 2 || channelsB[0].length < 2) return null;
+
+    const overlap = Math.min(channelsA[0].length, channelsB[0].length);
+    if (overlap < 2) return null;
+    channelsA = channelsA.map((x) => x.subarray(x.length - overlap));
+    channelsB = channelsB.map((x) => x.subarray(x.length - overlap));
 
     const labelsA = a.metadata.channelInfo;
     const labelsB = b.metadata.channelInfo;

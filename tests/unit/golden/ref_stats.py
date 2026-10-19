@@ -126,11 +126,12 @@ def build_stats(signals):
     matrix_f32 = [[float(stats.pearsonr(ai, bj).statistic) for bj in b_f32] for ai in a_f32]
 
     # Unequal lengths: the Correlation node documents "computed over the
-    # shorter of the two windows", so the reference is pearsonr on the overlap.
-    long_a = [as_float32(c) for c in signals["corr_a_tail_shift"]["channels"]]
+    # shorter of the two windows". Both windows end at their newest sample, so
+    # the reference is pearsonr on the newest n samples of each.
+    long_a = [as_float32(c) for c in signals["corr_a_head_shift"]["channels"]]
     short_b = [as_float32(c) for c in signals["corr_b_short"]["channels"]]
     n = min(len(long_a[0]), len(short_b[0]))
-    overlap = [float(stats.pearsonr(x[:n], y[:n]).statistic) for x, y in zip(long_a, short_b)]
+    overlap = [float(stats.pearsonr(x[-n:], y[-n:]).statistic) for x, y in zip(long_a, short_b)]
 
     correlation = {
         "a": "corr_a",
@@ -138,7 +139,7 @@ def build_stats(signals):
         "matrix": matrix,
         "matrixFromFloat32": matrix_f32,
         "unequal": {
-            "a": "corr_a_tail_shift",
+            "a": "corr_a_head_shift",
             "b": "corr_b_short",
             "overlap": n,
             "paired": overlap,

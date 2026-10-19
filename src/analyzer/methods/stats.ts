@@ -54,7 +54,12 @@ export function maximum(x: ArrayLike<number>): number {
   return isFinite(m) ? m : 0;
 }
 
-/** Pearson product-moment correlation between two equal-length signals. */
+/**
+ * Pearson product-moment correlation between two signals.
+ *
+ * Signals of unequal length are paired index to index from the start, over
+ * the shorter length, and both means are taken over those same samples.
+ */
 export function correlation(
   a: ArrayLike<number>,
   b: ArrayLike<number>
@@ -62,8 +67,14 @@ export function correlation(
   const n = Math.min(a.length, b.length);
   if (n === 0) return 0;
 
-  const ma = mean(a);
-  const mb = mean(b);
+  let ma = 0;
+  let mb = 0;
+  for (let i = 0; i < n; i++) {
+    ma += a[i];
+    mb += b[i];
+  }
+  ma /= n;
+  mb /= n;
 
   let num = 0;
   let da = 0;

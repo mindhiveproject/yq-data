@@ -256,18 +256,19 @@ def build_signals():
     }
     signals["corr_b_short"] = {
         "description": (
-            "corr_b truncated to 400 samples. Paired with corr_a_tail_shift it "
-            "makes the two windows differ in length."
+            "The newest 400 samples of corr_b: a shorter window ending at the "
+            "same instant. Paired with corr_a_head_shift it makes the two "
+            "windows differ in length."
         ),
         "fs": 128.0,
-        "channels": [c[:400] for c in b],
+        "channels": [c[-400:] for c in b],
     }
-    # The long partner of corr_b_short: same first 400 samples as corr_a, then
-    # a +5 shift on the remaining 112 that falls outside the overlap.
+    # The long partner of corr_b_short: corr_a with a +5 shift on its oldest
+    # 112 samples, which fall outside the 400-sample overlap in time.
     a_long = a.copy()
-    a_long[:, 400:] += 5.0
-    signals["corr_a_tail_shift"] = {
-        "description": "corr_a with +5 added to samples 400-511 (outside a 400-sample overlap).",
+    a_long[:, :-400] += 5.0
+    signals["corr_a_head_shift"] = {
+        "description": "corr_a with +5 added to samples 0-111 (outside the newest 400-sample overlap).",
         "fs": 128.0,
         "channels": list(a_long),
     }

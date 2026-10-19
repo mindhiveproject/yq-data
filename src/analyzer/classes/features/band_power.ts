@@ -10,7 +10,7 @@ import { getChannelCount, deinterleave } from "../../../utility";
 import { spectrum, bandAverage, bandSum, SpectrumScaling } from "../../methods/fft";
 import { WindowType } from "../../methods/window";
 
-/** Frequency band definitions, in Hz, as `[low, high)`. */
+/** Frequency band definitions, in Hz, as `[low, high]`. */
 export type BandDefinitions = Record<string, [number, number]>;
 
 /**
@@ -32,9 +32,21 @@ export interface BandPowerParameters {
   perChannel?: boolean;
   /** Weight of each channel in the cross-channel average. */
   channelWeights?: number[];
-  /** Sum bin values across the band instead of averaging them. */
+  /**
+   * How a band's bins are reduced. `"sum"` (default) integrates them: with
+   * `"psd"` scaling that is absolute band power in units² (µV² for EEG).
+   * `"mean"` averages them instead — mean spectral density in units²/Hz.
+   */
   aggregate?: "mean" | "sum";
-  /** Also emit each band as a fraction of total power across all bands. */
+  /**
+   * Emit each band as a fraction of the total across all bands, instead of
+   * absolute power: relative band power. Normalised per channel when
+   * `perChannel` is set, otherwise on the channel average.
+   *
+   * It is a share of *power* only with the default `scaling: "psd"` and
+   * `aggregate: "sum"`. The total is the sum of the configured bands, so keep
+   * them contiguous and non-overlapping.
+   */
   relative?: boolean;
   window?: WindowType;
   scaling?: SpectrumScaling;
@@ -48,8 +60,15 @@ export interface BandPowerParameters {
  * the channel labels a consumer sees are "Alpha", "Theta" and so on, ready to
  * bind straight to a visual parameter.
  *
- * Defaults reproduce the original You-Quantified numbers: a Hamming window,
- * magnitude scaling, and a mean across bins then across electrodes.
+ * Defaults give absolute band power, as YASA, MNE and EEGLAB report it: a
+ * Hamming window, a power spectral density, integrated across each band
+ * (units², µV² for EEG) then averaged across electrodes. Set
+ * `relative: true` for each band's share of the total, or normalise
+ * downstream. `scaling: "magnitude", aggregate: "mean"` is the original
+ * You-Quantified measure, mean sinusoid amplitude across the band. Its
+ * absolute values now read higher than the original code's by the window's
+ * `nfft / sum(w)` (about 1.85 for an unpadded Hamming window), because that
+ * code under-read amplitudes; `relative` output is unchanged.
  */
 export class BandPower extends BaseAnalyzer {
   readonly name = "BandPower";
@@ -61,10 +80,10 @@ export class BandPower extends BaseAnalyzer {
       bands: DEFAULT_EEG_BANDS,
       perChannel: false,
       channelWeights: undefined,
-      aggregate: "mean",
+      aggregate: "sum",
       relative: false,
       window: "hamming",
-      scaling: "magnitude",
+      scaling: "psd",
       ...parameters,
     });
   }
@@ -102,13 +121,19 @@ export class BandPower extends BaseAnalyzer {
     let values: Float32Array;
     let channelInfo: ChannelInfo[];
 
+    const relative = Boolean(this.parameters.relative);
+    // Fraction of the channel's own total, so each channel's bands sum to 1.
+    const channelTotals = bandsByChannel.map((bandValues) =>
+      relative ? bandValues.reduce((a, b) => a + b, 0) || 1 : 1
+    );
+
     if (this.parameters.perChannel) {
       values = new Float32Array(bandNames.length * channels);
       channelInfo = [];
       let index = 0;
       for (let b = 0; b < bandNames.length; b++) {
         for (let c = 0; c < channels; c++) {
-          values[index] = bandsByChannel[c][b];
+          values[index] = bandsByChannel[c][b] / channelTotals[c];
           channelInfo.push({
             index,
             label: `${bandNames[b]} ${info?.[c]?.label ?? c + 1}`,
@@ -133,7 +158,7 @@ export class BandPower extends BaseAnalyzer {
       channelInfo = bandNames.map((label, index) => ({ index, label }));
     }
 
-    if (this.parameters.relative) {
+    if (relative && !this.parameters.perChannel) {
       let total = 0;
       for (let i = 0; i < values.length; i++) total += values[i];
       if (total > 0) {

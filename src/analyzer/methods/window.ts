@@ -10,33 +10,17 @@ export type WindowType = "hamming" | "hann" | "blackman" | "rectangular";
 
 const cache = new Map<string, Float32Array>();
 
-/** Builds (and memoizes) a window of the given type and length. */
+/**
+ * Builds (and memoizes) a symmetric window of the given type and length, in
+ * float32. The values are {@link windowFunction}'s, so a one-sample window is
+ * `[1]`, as in SciPy and NumPy.
+ */
 export function getWindow(type: WindowType, length: number): Float32Array {
   const key = `${type}:${length}`;
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const w = new Float32Array(length);
-  const denom = length > 1 ? length - 1 : 1;
-
-  for (let i = 0; i < length; i++) {
-    const phase = (2 * Math.PI * i) / denom;
-    switch (type) {
-      case "hamming":
-        w[i] = 0.54 - 0.46 * Math.cos(phase);
-        break;
-      case "hann":
-        w[i] = 0.5 * (1 - Math.cos(phase));
-        break;
-      case "blackman":
-        w[i] = 0.42 - 0.5 * Math.cos(phase) + 0.08 * Math.cos(2 * phase);
-        break;
-      case "rectangular":
-        w[i] = 1;
-        break;
-    }
-  }
-
+  const w = Float32Array.from(windowFunction(type, length));
   cache.set(key, w);
   return w;
 }
@@ -57,6 +41,17 @@ export function windowPower(type: WindowType, length: number): number {
   const w = getWindow(type, length);
   let sum = 0;
   for (let i = 0; i < length; i++) sum += w[i] * w[i];
+  return sum;
+}
+
+/**
+ * Sum of window coefficients — the length times the window's coherent gain —
+ * used to normalize amplitude spectra.
+ */
+export function windowSum(type: WindowType, length: number): number {
+  const w = getWindow(type, length);
+  let sum = 0;
+  for (let i = 0; i < length; i++) sum += w[i];
   return sum;
 }
 
@@ -125,9 +120,9 @@ export function besselI0(x: number): number {
  * analysis, which is the symmetric window of length `length + 1` with its last
  * sample dropped.
  *
- * `getWindow` above keeps its float32, symmetric, non-parametric contract for
- * the spectral code; this is the exact version for design work, where float32
- * rounding in the window would show up in the filter coefficients.
+ * `getWindow` above is the float32, symmetric, non-parametric view of this
+ * for the spectral code; this is the exact version for design work, where
+ * float32 rounding in the window would show up in the filter coefficients.
  */
 export function windowFunction(
   spec: WindowSpec,

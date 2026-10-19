@@ -40,7 +40,8 @@ def package_spectrum(x, fs, window="hamming", detrend=True):
 
     Returns (magnitude, psd, freqs, nfft, nyquist_psd). ``psd`` is literally
     ``scipy.signal.periodogram`` with the package's window, padding and detrend;
-    ``magnitude`` is ``2|X|/nfft`` exactly as fft.ts documents it.
+    ``magnitude`` is the amplitude spectrum ``2|X|/sum(w)`` (``|X|/sum(w)`` at
+    DC), Heinzel, Ruediger & Schilling (2002) sec. 9, as fft.ts documents it.
     """
     n = len(x)
     nfft = next_pow2(n)
@@ -48,7 +49,8 @@ def package_spectrum(x, fs, window="hamming", detrend=True):
     xd = x - x.mean() if detrend else x
     spec = np.fft.rfft(xd * w, nfft)
     bins = nfft // 2
-    magnitude = 2 * np.abs(spec[:bins]) / nfft
+    magnitude = 2 * np.abs(spec[:bins]) / w.sum()
+    magnitude[0] /= 2
     freqs, psd = signal.periodogram(
         x,
         fs,
@@ -116,7 +118,8 @@ def build_spectrum(signals):
         "reference": (
             "scipy.signal.periodogram(x, fs, window=<symmetric window array>, "
             "nfft=next_pow2(len), detrend='constant'|False, scaling='density'), "
-            "first nfft/2 bins; magnitude = 2*|rfft(detrended*w, nfft)|/nfft"
+            "first nfft/2 bins; magnitude = 2*|rfft(detrended*w, nfft)|/sum(w), "
+            "|X|/sum(w) at DC (Heinzel 2002 sec. 9)"
         ),
         "cases": cases,
         "amplitude": {
@@ -128,27 +131,37 @@ def build_spectrum(signals):
     }
 
 
-def own_convention_bands(spec, res, bands, aggregate):
-    """bandAverage / bandSum from fft.ts: bins floor(lo/res) <= k < floor(hi/res)."""
+def band_area(spec, freqs, lo, hi):
+    """Area under the piecewise-linear spectrum between lo and hi (trapezoid
+    rule, edges linearly interpolated), clipped to the spectrum's frequencies."""
+    lo, hi = max(lo, freqs[0]), min(hi, freqs[-1])
+    if hi <= lo:
+        return 0.0, 0.0
+    grid = np.concatenate([[lo], freqs[(freqs > lo) & (freqs < hi)], [hi]])
+    return float(np.trapezoid(np.interp(grid, freqs, spec), grid)), float(hi - lo)
+
+
+def own_convention_bands(spec, freqs, bands, aggregate):
+    """bandAverage / bandSum from fft.ts: exact-edge trapezoid integration.
+
+    "sum" is bandSum, the area under the spectrum -- on a PSD, band power in
+    units^2. "mean" is bandAverage, that area over the band's width.
+    """
     out = []
     for lo, hi in bands.values():
-        start = max(0, int(np.floor(lo / res)))
-        end = min(len(spec), int(np.floor(hi / res)))
-        sel = spec[start:end]
-        if aggregate == "sum":
-            out.append(float(sel.sum()))
-        else:
-            out.append(float(sel.mean()) if end > start else 0.0)
+        area, width = band_area(spec, freqs, lo, hi)
+        out.append(area if aggregate == "sum" else (area / width if width else 0.0))
     return np.array(out)
 
 
 def build_band_power(signals):
     configs = [
-        # BandPower defaults: hamming, magnitude, mean, averaged across channels.
-        {"window": "hamming", "scaling": "magnitude", "aggregate": "mean", "relative": False},
-        {"window": "hamming", "scaling": "magnitude", "aggregate": "mean", "relative": True},
+        # BandPower defaults: hamming, psd, integrated, averaged across channels.
         {"window": "hamming", "scaling": "psd", "aggregate": "sum", "relative": False},
         {"window": "hamming", "scaling": "psd", "aggregate": "sum", "relative": True},
+        # The original You-Quantified numbers: mean amplitude across bins.
+        {"window": "hamming", "scaling": "magnitude", "aggregate": "mean", "relative": False},
+        {"window": "hamming", "scaling": "magnitude", "aggregate": "mean", "relative": True},
         {"window": "hann", "scaling": "psd", "aggregate": "sum", "relative": True},
         {"window": "hamming", "scaling": "psd", "aggregate": "mean", "relative": False},
     ]
@@ -168,7 +181,7 @@ def build_band_power(signals):
                 m, p, freqs, nfft, _ = package_spectrum(c, fs, cfg["window"], True)
                 spec = p if cfg["scaling"] == "psd" else m
                 per_channel.append(
-                    own_convention_bands(spec, fs / nfft, EEG_BANDS, cfg["aggregate"])
+                    own_convention_bands(spec, freqs, EEG_BANDS, cfg["aggregate"])
                 )
             per_channel = np.array(per_channel)  # [channel][band]
             averaged = per_channel.mean(axis=0)
@@ -186,14 +199,18 @@ def build_band_power(signals):
             )
 
         # Physically integrated band power from the *same* periodogram the
-        # package uses (hamming, zero-padded): sum over the package's bins
-        # times the bin width. Isolates the units question from window and
-        # band-edge choices.
+        # package uses (hamming, zero-padded): the piecewise-linear PSD
+        # integrated on a dense grid, an independent route to band_area().
+        # Isolates the units question from window and band-edge choices.
         integrated = []
         for c in chans:
-            _, p, _, nfft, _ = package_spectrum(c, fs, "hamming", True)
-            res = fs / nfft
-            integrated.append(own_convention_bands(p, res, EEG_BANDS, "sum") * res)
+            _, p, f, _, _ = package_spectrum(c, fs, "hamming", True)
+            integrated.append(
+                [
+                    np.trapezoid(np.interp(g, f, p), g)
+                    for g in (np.linspace(lo, hi, 400001) for lo, hi in EEG_BANDS.values())
+                ]
+            )
         integrated = np.array(integrated)
 
         # Field standard: YASA bandpower, one Welch segment spanning the window
@@ -225,8 +242,8 @@ def build_band_power(signals):
 
     return {
         "reference": {
-            "ownConvention": "package_spectrum() (scipy.signal.periodogram with the package's convention) + fft.ts bin selection [floor(lo/res), floor(hi/res))",
-            "integratedPsd": "sum(psd[bins]) * df -- band power in units^2",
+            "ownConvention": "package_spectrum() (scipy.signal.periodogram with the package's convention) + fft.ts exact-edge trapezoid integration over [lo, hi]",
+            "integratedPsd": "piecewise-linear PSD integrated on a dense grid over [lo, hi] -- band power in units^2",
             "yasa": "yasa.bandpower (Vallat & Walker 2021): scipy.signal.welch + scipy.integrate.simpson, inclusive band edges",
         },
         "cases": cases,

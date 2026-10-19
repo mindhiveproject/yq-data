@@ -488,7 +488,7 @@ export class Pipeline {
     if (!this.admits(runtime, port, packet.metadata)) return;
 
     try {
-      let result: DataPacket | null;
+      let result: DataPacket | DataPacket[] | null;
 
       if (isMultiInput(analyzer)) {
         this.record(analyzer, runtime.pending, port, packet);
@@ -501,8 +501,10 @@ export class Pipeline {
 
       if (!result) return;
 
-      runtime.metadata = result.metadata;
-      runtime.output$.next(result);
+      for (const output of Array.isArray(result) ? result : [result]) {
+        runtime.metadata = output.metadata;
+        runtime.output$.next(output);
+      }
     } catch (error) {
       if (this.options.onError) {
         this.options.onError(error, runtime.definition.id);

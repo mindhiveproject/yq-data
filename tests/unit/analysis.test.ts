@@ -108,7 +108,9 @@ describe("band power", () => {
     let result: DataPacket | null = null;
     for (const chunk of sineChunks(10, 4, EEG_RATE, 12, 100)) {
       const windowed = windowing.analyze(packet(chunk, meta));
-      if (windowed) result = bandPower.analyze(windowed) ?? result;
+      for (const w of windowed ? [windowed].flat() : []) {
+        result = bandPower.analyze(w) ?? result;
+      }
     }
 
     expect(result).not.toBeNull();
@@ -148,7 +150,9 @@ describe("heart rate", () => {
           Math.sin(2 * Math.PI * 1.2 * t) + 0.4 * Math.sin(2 * Math.PI * 0.05 * t);
       }
       const windowed = windowing.analyze(packet(samples, ppgMeta));
-      if (windowed) result = heartRate.analyze(windowed) ?? result;
+      for (const w of windowed ? [windowed].flat() : []) {
+        result = heartRate.analyze(w) ?? result;
+      }
     }
 
     expect(result).not.toBeNull();

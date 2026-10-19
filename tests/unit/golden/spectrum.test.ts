@@ -8,7 +8,8 @@
  * window, mean removed, zero-padded to a power of two -- so these are
  * conformance tests: the package should match to float32 precision.
  *
- * `[divergence]` tests use `divergence` (= `it.failing`); see README.md.
+ * No open divergences remain here; a new one would use `divergence`
+ * (= `it.failing`), as README.md describes.
  */
 import "./allclose";
 import {
@@ -18,7 +19,7 @@ import {
   spectrum,
   windowPower,
 } from "../../../src";
-import { divergence, fixture, inputs, maxAbs, packetFor, recorder } from "./harness";
+import { fixture, inputs, maxAbs, packetFor, recorder } from "./harness";
 
 interface WindowDoc {
   cases: {
@@ -71,9 +72,9 @@ describe("golden: window functions vs scipy.signal.windows (sym=True)", () => {
   });
 
   // A one-sample window is degenerate, but SciPy (and NumPy) define it as
-  // [1.0]; the package evaluates the cosine formula at phase 0 and gets 0.08
-  // for Hamming and 0 for Hann/Blackman. Divergence D10.
-  divergence("[divergence] N = 1 is the identity window, as in SciPy", () => {
+  // [1.0]. Was divergence D10 (the cosine formula at phase 0 gave 0.08 for
+  // Hamming and 0 for Hann/Blackman).
+  it("N = 1 is the identity window, as in SciPy", () => {
     for (const c of windows.cases.filter((w) => w.length === 1)) {
       expect(Array.from(getWindow(c.type, 1))).toBeAllClose(c.symmetric, { rtol: 1e-6 });
     }
@@ -115,7 +116,7 @@ describe("golden: spectrum() vs scipy.signal.periodogram", () => {
       });
     });
 
-    it("magnitude scaling equals 2|X|/nfft, as documented", () => {
+    it("magnitude scaling equals 2|X|/sum(w), as documented", () => {
       sig.channels.forEach((ch, i) => {
         const s = run(ch, "magnitude");
         expect(Array.from(s.values)).toBeAllClose(c.magnitude[i], {
@@ -137,12 +138,12 @@ describe("golden: amplitude spectrum recovers sinusoid amplitude (Heinzel 2002)"
     expect([read("rectangular")]).toBeAllClose([trueAmplitude], { rtol: 1e-6 });
   });
 
-  // fft.ts documents "magnitude" as "amplitude of the underlying sinusoid, in
-  // the signal's own units", but normalizes by N rather than by sum(w), so a
-  // tapered window scales every bin by its coherent gain (0.54 Hamming, 0.5
-  // Hann). Zero padding scales it further by len/nfft. Divergence D3.
+  // Normalizing by sum(w) rather than by nfft is what makes this hold for a
+  // tapered window. Was divergence D3: dividing by nfft read every bin low by
+  // the coherent gain (0.54 Hamming, 0.5 Hann), and by len/nfft more when
+  // zero padded.
   for (const window of ["hamming", "hann"] as const) {
-    divergence(`[divergence] ${window} window: magnitude reads the true amplitude`, () => {
+    it(`${window} window: magnitude reads the true amplitude`, () => {
       const value = read(window);
       rec.record(`amplitude:${window}`, {
         package: value,
