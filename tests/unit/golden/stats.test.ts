@@ -3,9 +3,6 @@
  * correlation against NumPy / SciPy.
  *
  * Fixture: `stats.json` (see `ref_stats.py` for the exact reference calls).
- *
- * No open divergences remain here; a new one would use `divergence`
- * (= `it.failing`) and name its ID, as README.md describes.
  */
 import "./allclose";
 import {
@@ -30,8 +27,7 @@ import {
   inputs,
   maxAbs,
   packetFor,
-  recorder,
-} from "./harness";
+  } from "./harness";
 
 interface StatsDoc {
   descriptive: {
@@ -65,8 +61,6 @@ interface StatsDoc {
 }
 
 const golden = fixture<StatsDoc>("stats");
-const rec = recorder("stats");
-afterAll(() => rec.flush());
 
 const f32 = (x: number[]) => Float32Array.from(x);
 
@@ -150,7 +144,6 @@ describe("golden: polynomial fit vs numpy.polynomial", () => {
     const y = inputs[c.signal].channels[0];
     const t = y.map((_, i) => i / inputs[c.signal].fs);
     const coefficients = polyfit(t, y, c.degree);
-    rec.record(`polyfit:${c.signal}:${c.degree}`, coefficients);
     // Normal equations square the condition number of the Vandermonde system,
     // so low degrees are fine but precision is lost relative to NumPy's
     // scaled lstsq; 1e-7 relative still pins the coefficients.
@@ -186,7 +179,6 @@ describe("golden: detrend vs scipy.signal.detrend", () => {
         // rounding, not the solve. 1e-5 leaves headroom.
         const sd = Math.sqrt(poly6.reduce((s, v) => s + v * v, 0) / poly6.length);
         const actual = Array.from(detrend(x, 6, sig.fs));
-        rec.record(`poly6:${c.signal}:${c.samples}`, actual);
         expect(actual).toBeAllClose(poly6, { rtol: 0, atol: 1e-5 * sd });
       });
     }
@@ -229,7 +221,6 @@ describe("golden: Pearson correlation vs scipy.stats.pearsonr", () => {
       a: packetFor(unequal.a),
       b: packetFor(unequal.b),
     })!;
-    rec.record("correlation:unequal", Array.from(out.data));
     expect(Array.from(out.data)).toBeAllClose(unequal.paired, { rtol: 1e-5, atol: 1e-6 });
   });
 });

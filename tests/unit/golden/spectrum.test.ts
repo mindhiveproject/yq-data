@@ -7,9 +7,6 @@
  * called with exactly the package's documented convention -- symmetric
  * window, mean removed, zero-padded to a power of two -- so these are
  * conformance tests: the package should match to float32 precision.
- *
- * No open divergences remain here; a new one would use `divergence`
- * (= `it.failing`), as README.md describes.
  */
 import "./allclose";
 import {
@@ -19,7 +16,7 @@ import {
   spectrum,
   windowPower,
 } from "../../../src";
-import { fixture, inputs, maxAbs, packetFor, recorder } from "./harness";
+import { fixture, inputs, maxAbs, packetFor } from "./harness";
 
 interface WindowDoc {
   cases: {
@@ -55,8 +52,6 @@ interface SpectrumDoc {
 
 const windows = fixture<WindowDoc>("window");
 const golden = fixture<SpectrumDoc>("spectrum");
-const rec = recorder("spectrum");
-afterAll(() => rec.flush());
 
 describe("golden: window functions vs scipy.signal.windows (sym=True)", () => {
   const regular = windows.cases.filter((c) => c.length > 1);
@@ -105,7 +100,6 @@ describe("golden: spectrum() vs scipy.signal.periodogram", () => {
     it("psd scaling equals the periodogram (density)", () => {
       sig.channels.forEach((ch, i) => {
         const s = run(ch, "psd");
-        rec.record(`psd:${c.signal}:${c.window}:${c.detrend}:${i}`, s.values);
         // Measured agreement is ~3e-8 of the peak bin. The atol is relative
         // to the peak because leakage-floor bins carry float32 noise that is
         // large relative to themselves but negligible on the spectrum's scale.
@@ -129,7 +123,7 @@ describe("golden: spectrum() vs scipy.signal.periodogram", () => {
 });
 
 describe("golden: amplitude spectrum recovers sinusoid amplitude (Heinzel 2002)", () => {
-  const { signal, trueAmplitude, bin, windows: byWindow } = golden.amplitude;
+  const { signal, trueAmplitude, bin } = golden.amplitude;
   const x = Float32Array.from(inputs[signal].channels[0]);
   const read = (window: WindowType) =>
     spectrum(x, { samplingRate: inputs[signal].fs, window, scaling: "magnitude" }).values[bin];
@@ -145,11 +139,6 @@ describe("golden: amplitude spectrum recovers sinusoid amplitude (Heinzel 2002)"
   for (const window of ["hamming", "hann"] as const) {
     it(`${window} window: magnitude reads the true amplitude`, () => {
       const value = read(window);
-      rec.record(`amplitude:${window}`, {
-        package: value,
-        heinzel: byWindow[window].heinzelAmplitudeAtBin,
-        coherentGain: byWindow[window].coherentGain,
-      });
       expect([value]).toBeAllClose([trueAmplitude], { rtol: 1e-3 });
     });
   }

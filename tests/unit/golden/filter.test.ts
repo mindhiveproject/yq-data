@@ -11,8 +11,6 @@
  * Here the design is compared by magnitude response |H(f)|, the quantity a
  * user hears or sees. `order` is the `N` of `scipy.signal.butter(N, ...)`, so
  * band filters have 2N poles in both.
- *
- * `[divergence]` tests use `divergence` (= `it.failing`); see README.md.
  */
 import "./allclose";
 import {
@@ -27,12 +25,10 @@ import {
 import {
   cascadeMagnitude,
   channelsOf,
-  divergence,
   fixture,
   inputs,
   maxAbsDiff,
   packetStream,
-  recorder,
   rmsOf,
   toDb,
 } from "./harness";
@@ -74,8 +70,6 @@ const ff = fixture<{
   sosCases: { id: string; signal: string; sections: Biquad[]; scipy: number[] }[];
 }>("filtfilt");
 
-const rec = recorder("filter");
-afterAll(() => rec.flush());
 
 const responseOf = (c: DesignCase) =>
   cascadeMagnitude(
@@ -89,44 +83,9 @@ const responseOf = (c: DesignCase) =>
     c.samplingRate
   );
 
-const byId = (id: string) => design.cases.find((c) => c.id === id)!;
-
-// Cases drawn in the report: every band filter, plus one low-pass and one
-// high-pass for contrast.
-const DRAWN = ["lowpass_40_256_o4", "highpass_0.5_256_o4"];
-
 describe("golden: Butterworth design vs scipy.signal.butter", () => {
   it.each(design.cases)("$id ($why)", (c) => {
     const actual = responseOf(c);
-    rec.record(`design:${c.id}`, actual);
-    if (DRAWN.includes(c.id) || Array.isArray(c.cutoff)) {
-      const edges = Array.isArray(c.cutoff) ? c.cutoff : [c.cutoff];
-      const lo = edges[0] / 8;
-      const hi = Math.min(edges[edges.length - 1] * 4, c.samplingRate / 2);
-      rec.compare({
-        id: `design:${c.id}`,
-        group: "Butterworth design",
-        title: `${c.kind} ${edges.map((e) => +e.toPrecision(3)).join("–")} Hz @ ${c.samplingRate} Hz, order ${c.order} (${c.why})`,
-        note: "Magnitude response in dB. A Butterworth filter is −3.01 dB at each cutoff.",
-        kind: "line",
-        x: c.frequencies,
-        series: [
-          { name: "SciPy", role: "reference", values: c.magnitude.map(toDb) },
-          { name: "Package", role: "package", values: actual.map(toDb) },
-        ],
-        xScale: "log",
-        xDomain: [lo, hi],
-        yDomain: [-30, 2],
-        xLabel: "Frequency (Hz)",
-        yLabel: "Gain (dB)",
-        unit: " dB",
-        guides: [
-          { axis: "y", value: -3.0103, label: "−3 dB" },
-          ...edges.map((value) => ({ axis: "x" as const, value })),
-        ],
-        expect: "match",
-      });
-    }
     // The design is SciPy's own algorithm, so the response agrees to rounding
     // error: measured 1e-15 for most cases, 1e-12 for the 0.5 Hz high-pass.
     expect(actual).toBeAllClose(c.magnitude, { rtol: 0, atol: 1e-10 });
@@ -147,7 +106,6 @@ describe("golden: lfilter vs scipy.signal.lfilter", () => {
   describe.each(lf.cases)("$id on $signal", (c) => {
     const x = Float32Array.from(inputs[c.signal].channels[0]);
     const y = lfilter(c.b, c.a, x);
-    rec.record(`lfilter:${c.id}`, y);
 
     it("matches to float32 precision of the output scale", () => {
       // The recursion runs in float64 and is rounded once, on output, so the
@@ -174,7 +132,6 @@ describe("golden: Filtering node, streamed in device-sized packets", () => {
 
   it.each(streaming.cases)("$id: state carries across $packetSize-sample packets", (c) => {
     const out = run(c);
-    rec.record(`stream:${c.id}`, out);
     out.forEach((ch, i) => {
       // Same float32 budget as lfilter above: chunking adds nothing, which is
       // the point -- 640 packet boundaries and no discontinuity at any.
@@ -189,36 +146,7 @@ describe("golden: zero-phase filtering vs scipy.signal.filtfilt", () => {
   describe.each(ff.cases)("$id", (c) => {
     const x = Float32Array.from(inputs[c.signal].channels[0]);
     const y = filtfilt(c.b, c.a, x);
-    rec.record(`filtfilt:${c.id}`, y);
     const scale = rmsOf(c.scipy);
-    if (c.signal.includes("offset")) {
-      // The raw-sensor-like PPG: the edges are where a zero initial state
-      // would show, on top of a large offset.
-      const fs = inputs[c.signal].fs;
-      const span = 2 * fs;
-      const slices: [string, number, number][] = [
-        ["first 2 s", 0, span],
-        ["last 2 s", x.length - span, x.length],
-      ];
-      for (const [label, lo, hi] of slices) {
-        rec.compare({
-          id: `filtfilt:${c.id}:${label}`,
-          group: "Zero-phase filtering",
-          title: `filtfilt, ${label} (${c.id.split(":")[0].replace(/_/g, " ")})`,
-          note: "Raw signal sits on a large offset, so any start-up transient at the edges would be visible.",
-          kind: "line",
-          x: Array.from({ length: hi - lo }, (_, i) => (lo + i) / fs),
-          series: [
-            { name: "SciPy", role: "reference", values: c.scipy.slice(lo, hi) },
-            { name: "Package", role: "package", values: y.subarray(lo, hi) },
-          ],
-          xLabel: "Time (s)",
-          yLabel: "Sensor counts",
-          expect: "match",
-        });
-      }
-    }
-
     it("interior matches scipy.signal.filtfilt", () => {
       expect(maxAbsDiff(y, c.scipy, EDGE, x.length - EDGE)).toBeLessThan(1e-6 * scale);
     });
@@ -234,7 +162,6 @@ describe("golden: zero-phase filtering vs scipy.signal.filtfilt", () => {
   describe.each(ff.sosCases)("$id (cascade)", (c) => {
     const x = Float32Array.from(inputs[c.signal].channels[0]);
     const y = sosfiltfilt(c.sections, x);
-    rec.record(`sosfiltfilt:${c.id}`, y);
     const scale = rmsOf(c.scipy);
 
     it("matches scipy.signal.sosfiltfilt, edges included", () => {

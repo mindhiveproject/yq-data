@@ -4,6 +4,7 @@ import {
   VisionAssetOptions,
   DEFAULT_WASM_PATH,
   FACE_BOX_CHANNELS,
+  FaceFrame,
   pointStreamMetadata,
 } from "./base_vision";
 import { MEDIAPIPE_FACE_478 } from "../../../draw/face_topology";
@@ -68,6 +69,11 @@ const FACE_MESH_POINTS = 478;
  * a transport. A frame with no face publishes nothing; consumers read the
  * silence as the face being gone.
  *
+ * Other receivers in the page can reuse the tracking instead of running the
+ * model a second time: {@link onFrame} hands them the raw landmarks of every
+ * frame, while that frame is still the one the video element shows. This is
+ * how {@link RPPGReceiver} shares a landmarker (its `faceSource` option).
+ *
  * Lugaresi, C. et al. (2019). MediaPipe: A Framework for Building Perception
  * Pipelines. arXiv:1906.08172. https://arxiv.org/abs/1906.08172
  */
@@ -76,6 +82,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
   deviceID: string | number;
 
   private landmarker: any;
+  private frameListeners = new Set<(frame: FaceFrame) => void>();
   private options: Required<
     Pick<
       FaceLandmarkOptions,
@@ -121,6 +128,22 @@ export class FaceLandmarkReceiver extends VisionReceiver {
   protected closeTask(): void {
     this.landmarker?.close?.();
     this.landmarker = undefined;
+  }
+
+  /**
+   * Calls `listener` with the landmarks of every frame processed, including
+   * frames where no face was found (`faces` is then empty).
+   *
+   * Synchronous, straight after inference, so a listener that reads pixels
+   * from the video element reads the frame the landmarks belong to. Keep it
+   * quick: it runs inside this receiver's frame budget. Returns a function
+   * that removes the listener.
+   */
+  public onFrame(listener: (frame: FaceFrame) => void): () => void {
+    this.frameListeners.add(listener);
+    return () => {
+      this.frameListeners.delete(listener);
+    };
   }
 
   private faceSuffix(face: number): string | undefined {
@@ -254,6 +277,21 @@ export class FaceLandmarkReceiver extends VisionReceiver {
             },
             flat
           );
+        }
+      }
+    }
+
+    if (this.frameListeners.size > 0) {
+      const frame: FaceFrame = {
+        timestampMs,
+        faces: results?.faceLandmarks ?? [],
+      };
+      for (const listener of this.frameListeners) {
+        // One failing listener must not starve the others, or this receiver.
+        try {
+          listener(frame);
+        } catch (error) {
+          console.error(`${this.deviceName} frame listener failed:`, error);
         }
       }
     }

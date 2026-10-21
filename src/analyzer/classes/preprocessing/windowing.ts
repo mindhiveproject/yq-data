@@ -5,6 +5,7 @@ import {
   StreamMetadata,
 } from "../../../data_stream.interface";
 import { Accepts, BaseAnalyzer } from "../../base_analyzer";
+import { GapDetector } from "../../../utility";
 
 export interface WindowingParameters {
   /** Window length. Seconds unless `unit` says otherwise. */
@@ -34,6 +35,19 @@ export interface WindowingParameters {
    *   feature for later analysis. One packet can then yield several windows.
    */
   frames?: "latest" | "all";
+  /**
+   * Missing time, in seconds, after which the buffer is discarded rather than
+   * joined across the gap.
+   *
+   * A window spanning a gap splices two unrelated stretches of signal
+   * together, and the discontinuity reads as broadband power or a false beat.
+   * `"auto"` (default) acts only on a stream that declares a sample clock (see
+   * `hasSampleClock`), such as the camera pulse, where any missing sample is
+   * a real gap. Other streams are stamped on arrival, so a gap in their
+   * timestamps may be nothing but transport delay; give a number to apply it
+   * to them anyway.
+   */
+  maxGap?: number | "auto";
 }
 
 /**
@@ -47,7 +61,9 @@ export interface WindowingParameters {
  * makes the window length a visible property of the graph.
  *
  * Returns `null` for every packet that only partially fills the buffer. Each
- * window is stamped with the time of its own last sample.
+ * window is stamped with the time of its own last sample. After a gap (see
+ * `maxGap`) the buffer starts again from empty, so the first window after it
+ * arrives a full window length later.
  */
 export class Windowing extends BaseAnalyzer {
   readonly name = "Windowing";
@@ -57,6 +73,7 @@ export class Windowing extends BaseAnalyzer {
   /** Interleaved sample buffer, drained a hop at a time. */
   private buffer: number[] = [];
   private channelCount = 1;
+  private gaps: GapDetector;
 
   constructor(parameters: WindowingParameters = {}) {
     super({
@@ -65,8 +82,10 @@ export class Windowing extends BaseAnalyzer {
       unit: "seconds",
       emitPartial: false,
       frames: "latest",
+      maxGap: "auto",
       ...parameters,
     });
+    this.gaps = new GapDetector(this.parameters.maxGap);
   }
 
   /** A size in seconds needs a rate to interpret it; in samples it does not. */
@@ -76,6 +95,7 @@ export class Windowing extends BaseAnalyzer {
 
   public reset(): void {
     this.buffer = [];
+    this.gaps.reset();
   }
 
   /** Window length in samples per channel, for a given stream. */
@@ -107,6 +127,8 @@ export class Windowing extends BaseAnalyzer {
       this.channelCount = channels;
       this.buffer = [];
     }
+
+    if (this.gaps.next(packet)) this.buffer = [];
 
     for (let i = 0; i < packet.data.length; i++) this.buffer.push(packet.data[i]);
 

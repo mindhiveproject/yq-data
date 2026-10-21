@@ -179,6 +179,73 @@ export function getSampleCount(packet: DataPacket<any>): number {
   return channels > 0 ? Math.floor(packet.data.length / channels) : 0;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Sample clocks and gaps                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Whether a stream's packet timestamps are its sample clock.
+ *
+ * Most receivers stamp a packet with the moment it arrived, and a device that
+ * buffers over Bluetooth can deliver a second of continuous samples late, in
+ * one burst — so a jump between two packets' timestamps proves nothing. A
+ * stream that sets `additionalMetadata.sampleClock` promises more: each packet
+ * is stamped with the time of its last sample on one regular grid, so
+ * consecutive packets sit exactly one sample period apart and any longer jump
+ * is samples that do not exist. Buffering nodes use that to restart instead of
+ * splicing the two sides of a gap together.
+ */
+export function hasSampleClock(meta: StreamMetadata): boolean {
+  return meta.additionalMetadata?.sampleClock === true;
+}
+
+/**
+ * Tells missing samples apart from ordinary packet spacing.
+ *
+ * `maxGap` is the longest run of missing time, in seconds, to let through as
+ * if nothing were missing. `"auto"` trusts timestamps only on a stream that
+ * declares a {@link hasSampleClock sample clock}, and there treats half a
+ * sample period of missing time as a gap; on any other stream it never
+ * reports one.
+ */
+export class GapDetector {
+  private lastSampleTime: number | undefined;
+
+  constructor(private readonly maxGap: number | "auto" = "auto") {}
+
+  /**
+   * Whether samples are missing between the previous packet and this one.
+   *
+   * Call once per packet, in order. Packets stamped earlier than the last one
+   * (a source whose clock reset) are not gaps; they restart the comparison.
+   */
+  next(packet: DataPacket<any>): boolean {
+    const meta = packet.metadata;
+    const rate = meta.samplingRate;
+    const period = rate && rate > 0 ? 1000 / rate : 0;
+    const first =
+      packet.timestamp - Math.max(0, getSampleCount(packet) - 1) * period;
+
+    const previous = this.lastSampleTime;
+    this.lastSampleTime = packet.timestamp;
+    if (previous === undefined) return false;
+
+    const tolerance =
+      this.maxGap === "auto"
+        ? hasSampleClock(meta) && period > 0
+          ? period / 2
+          : undefined
+        : this.maxGap * 1000;
+    if (tolerance === undefined) return false;
+
+    return first - previous - period > tolerance;
+  }
+
+  public reset(): void {
+    this.lastSampleTime = undefined;
+  }
+}
+
 /**
  * Extracts one channel from an interleaved packet as a dense Float32Array.
  *

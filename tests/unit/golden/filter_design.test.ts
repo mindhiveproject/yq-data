@@ -32,10 +32,8 @@ import {
   toSosMatrix,
   windowFunction,
 } from "../../../src";
-import { channelsOf, fixture, inputs, maxAbsDiff, packetStream, recorder, rmsOf } from "./harness";
+import { channelsOf, fixture, inputs, maxAbsDiff, packetStream, rmsOf } from "./harness";
 
-const rec = recorder("filter_design");
-afterAll(() => rec.flush());
 
 type FilterKind = "lowpass" | "highpass" | "bandpass" | "bandstop";
 
@@ -186,21 +184,6 @@ describe("golden: firwin vs scipy.signal.firwin", () => {
     expect(taps.length).toBe(c.numtaps);
     expect(taps).toBeAllClose(c.taps, { rtol: 1e-9, atol: 1e-12 });
     if (/^(lowpass|bandpass)_hamming:(blackman|hann|kaiser_8\.6)$/.test(c.id)) {
-      rec.compare({
-        id: `firwin:${c.id}`,
-        group: "FIR design (firwin)",
-        title: `${c.id.replace(":", " · ").replace("_hamming", "")} window, ${c.numtaps} taps @ ${c.fs} Hz`,
-        note: "Taps of the windowed-sinc filter, in sample order.",
-        kind: "line",
-        x: c.taps.map((_, i) => i),
-        series: [
-          { name: "SciPy", role: "reference", values: c.taps },
-          { name: "Package", role: "package", values: taps },
-        ],
-        xLabel: "Tap",
-        yLabel: "Coefficient",
-        expect: "match",
-      });
     }
   });
 
@@ -304,25 +287,6 @@ describe("golden: zero-phase filtering over pad types vs scipy", () => {
     };
     const y = c.form === "sos" ? sosfiltfilt(c.sections!, x, options) : filtfilt(c.b!, c.a!, x, options);
     expect(maxAbsDiff(y, c.scipy)).toBeLessThan(2e-6 * rmsOf(c.scipy));
-    if (c.id === "sos:eeg_dc_drift_30s:odd:None") {
-      const fs = inputs[c.signal].fs;
-      const n = Math.round(fs);
-      rec.compare({
-        id: `sosfiltfilt:${c.id}`,
-        group: "Zero-phase filtering",
-        title: "sosfiltfilt, Butterworth 1–40 Hz band-pass on drifting EEG, first second",
-        note: "Odd-reflection padding, steady-state initial conditions, default padlen.",
-        kind: "line",
-        x: Array.from({ length: n }, (_, i) => i / fs),
-        series: [
-          { name: "SciPy", role: "reference", values: c.scipy.slice(0, n) },
-          { name: "Package", role: "package", values: y.subarray(0, n) },
-        ],
-        xLabel: "Time (s)",
-        yLabel: "µV",
-        expect: "match",
-      });
-    }
   });
 
   it("keeps the positional padtype form", () => {

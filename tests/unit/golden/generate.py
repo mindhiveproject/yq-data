@@ -1,12 +1,6 @@
 """Regenerate the golden-value fixtures.
 
-Usage (conda):
-
-    conda env create -f tests/unit/golden/environment.yml   # first time only
-    conda activate yq-golden
-    python tests/unit/golden/generate.py
-
-or with a plain virtualenv:
+Usage:
 
     python -m venv .venv && source .venv/bin/activate
     pip install -r tests/unit/golden/requirements.txt
@@ -16,7 +10,7 @@ Writes ``fixtures/_inputs.json`` (the signals) and one fixture per method
 family -- see the table in README.md. Commit them all.
 
 To rebuild one group only (``filter``, ``spectral``, ``stats``, ``cardiac``,
-``rms``) -- which also needs only that group's libraries -- name it:
+``rppg``, ``rms``) -- which also needs only that group's libraries -- name it:
 
     python tests/unit/golden/generate.py filter
  The exact library
@@ -104,6 +98,7 @@ def groups(signals):
         "window_functions": ("filter", ref_filter.build_window_functions),
         "filter_extras": ("filter", lambda: ref_filter.build_filtering_extras(signals)),
         "cardiac": ("cardiac", lazy("ref_cardiac", "build_cardiac", signals)),
+        "rppg": ("rppg", lazy("ref_rppg", "build_rppg", signals)),
     }
 
 

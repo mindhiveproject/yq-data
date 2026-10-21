@@ -13,3 +13,4 @@ export * from "./filter";
 export * from "./filter_design";
 export * from "./stats";
 export * from "./peaks";
+export * from "./rppg";

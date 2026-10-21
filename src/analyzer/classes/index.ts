@@ -12,6 +12,7 @@ export * from "./preprocessing/normalization";
 export * from "./preprocessing/channel_selection";
 
 export * from "./transform/spectrum";
+export * from "./transform/pulse_extraction";
 
 export * from "./features/band_power";
 export * from "./features/statistics";

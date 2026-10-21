@@ -156,6 +156,61 @@ def _ppg(
     return signal, truth
 
 
+# Relative pulsatile strength of red, green and blue in skin under white light:
+# the blood volume pulse signature of de Haan & van Leest (2014, Physiol Meas
+# 35:1913, doi:10.1088/0967-3334/35/9/1913).
+PBV_SIGNATURE = np.array([0.33, 0.77, 0.53])
+
+
+def _rppg_rgb(
+    rng,
+    fs,
+    seconds,
+    bpm,
+    pulse=0.004,
+    skin=(180.0, 130.0, 105.0),
+    drift=0.04,
+    flicker=0.0,
+    flicker_hz=0.85,
+    specular=0.0,
+    motion_hz=0.45,
+    noise=0.08,
+):
+    """Mean skin colour seen by a camera, with known beat locations.
+
+    Wang et al.'s skin reflection model (2017, IEEE TBME 64:1479, eq. 1):
+    C(t) = I(t) * (u_d * d0 * (1 - u_p * p(t)) + u_s * s(t)) + n(t), with
+
+    - ``skin`` the diffuse skin colour u_d * d0, in 0-255 camera units;
+    - p(t) the blood volume pulse, the clean two-Gaussian waveform of `_ppg`
+      scaled to unit range, so that ``pulse`` is green's peak-to-peak relative
+      change; more blood absorbs more light, so each systole is a dip;
+    - u_p the PBV signature, relative to green;
+    - I(t) the light's brightness: a slow ``drift`` and a ``flicker`` at
+      ``flicker_hz``, both as fractions of the mean;
+    - s(t) a specular highlight in the light's colour (white), swelling and
+      fading with a head motion at ``motion_hz``, in camera units;
+    - n(t) camera noise per channel, in camera units.
+
+    Returns ``(channels, truth)``; the truth beats are the systolic maxima of
+    p(t), so the dips in the colour.
+    """
+    clean, truth = _ppg(rng, fs, seconds, bpm, wander=0.0, noise=0.0)
+    p = (clean - clean.mean()) / (clean.max() - clean.min())
+    n = len(p)
+    t = np.arange(n) / fs
+
+    u_p = PBV_SIGNATURE / PBV_SIGNATURE[1]
+    brightness = 1.0 + drift * (t / seconds - 0.5)
+    brightness += flicker * np.sin(2 * np.pi * flicker_hz * t + rng.uniform(0, 2 * np.pi))
+    highlight = specular * (0.5 + 0.5 * np.sin(2 * np.pi * motion_hz * t + rng.uniform(0, 2 * np.pi))) ** 2
+
+    diffuse = np.asarray(skin)[:, None] * (1.0 - pulse * u_p[:, None] * p[None, :])
+    colour = brightness[None, :] * (diffuse + highlight[None, :])
+    colour += noise * rng.standard_normal((3, n))
+    return list(colour), truth
+
+
 def build_signals():
     """Return the signal registry. Called by generate.py."""
     rng = np.random.default_rng(20260828)
@@ -271,6 +326,33 @@ def build_signals():
             "description": desc,
             "fs": fs,
             "channels": [x],
+            "truth": truth,
+        }
+
+    # Camera skin colour (red, green, blue) for rPPG pulse extraction. Each
+    # stresses a different part of the problem; see _rppg_rgb.
+    for name, seed, fs, seconds, bpm, kwargs, desc in [
+        ("rppg_rgb_still_72bpm", 4001, 30.0, 30.0, 72.0, {},
+         "Camera skin colour (R, G, B) at 30 fps, 30 s, 72 bpm: still subject, "
+         "steady light, slow 4% brightness drift."),
+        ("rppg_rgb_flicker_66bpm", 4002, 30.0, 30.0, 66.0,
+         {"flicker": 0.012, "flicker_hz": 0.85},
+         "Camera skin colour at 30 fps, 30 s, 66 bpm, under a brightness flicker "
+         "at 0.85 Hz (51 bpm) three times the pulse's size: inside the heart-rate "
+         "band, so a green-only method locks onto the light."),
+        ("rppg_rgb_motion_84bpm", 4003, 30.0, 30.0, 84.0,
+         {"specular": 1.5, "motion_hz": 0.45, "flicker": 0.004, "flicker_hz": 0.45},
+         "Camera skin colour at 30 fps, 30 s, 84 bpm, with a head motion at "
+         "0.45 Hz that moves a white specular highlight and the shading."),
+        ("rppg_rgb_15fps_60bpm", 4004, 15.0, 30.0, 60.0, {"noise": 0.15},
+         "Camera skin colour at 15 fps (a webcam in dim light), 30 s, 60 bpm, "
+         "with more sensor noise."),
+    ]:
+        channels, truth = _rppg_rgb(np.random.default_rng(seed), fs, seconds, bpm, **kwargs)
+        signals[name] = {
+            "description": desc,
+            "fs": fs,
+            "channels": channels,
             "truth": truth,
         }
 

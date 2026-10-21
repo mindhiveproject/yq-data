@@ -6,6 +6,7 @@ import { Filtering } from "./classes/preprocessing/filtering";
 import { Normalization } from "./classes/preprocessing/normalization";
 import { ChannelSelection } from "./classes/preprocessing/channel_selection";
 import { SpectrumAnalyzer } from "./classes/transform/spectrum";
+import { PulseExtraction } from "./classes/transform/pulse_extraction";
 import { BandPower } from "./classes/features/band_power";
 import {
   StatisticalFeatures,
@@ -81,6 +82,10 @@ registerAnalyzer(
 );
 registerAnalyzer(AnalysisMethod.FFT, (p) => new SpectrumAnalyzer(p));
 registerAnalyzer(AnalysisMethod.PSD, (p) => new SpectrumAnalyzer(p));
+registerAnalyzer(
+  AnalysisMethod.PULSE_EXTRACTION,
+  (p) => new PulseExtraction(p)
+);
 registerAnalyzer(AnalysisMethod.BAND_POWER, (p) => new BandPower(p));
 registerAnalyzer(
   AnalysisMethod.STATISTICAL_FEATURES,

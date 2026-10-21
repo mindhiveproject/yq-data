@@ -17,8 +17,6 @@
  *     input, are scored alongside the package.
  *  4. Reference pipeline -- NeuroKit2's default PPG pipeline (Elgendi 2013)
  *     on the whole signal, for context.
- *
- * `[divergence]` tests use `divergence` (= `it.failing`); see README.md.
  */
 import "./allclose";
 import {
@@ -34,7 +32,7 @@ import {
   rmssd,
   sosfiltfilt,
 } from "../../../src";
-import { fixture, inputs, packetFor, recorder } from "./harness";
+import { fixture, inputs, packetFor } from "./harness";
 
 interface CardiacWindow {
   start: number;
@@ -75,8 +73,6 @@ interface CardiacDoc {
 }
 
 const golden = fixture<CardiacDoc>("cardiac");
-const rec = recorder("cardiac");
-afterAll(() => rec.flush());
 
 const MIN_RATE = 40;
 const MAX_RATE = 200;
@@ -197,15 +193,6 @@ function detectionsFor(c: CardiacCase): Record<string, number[]> {
   return out;
 }
 
-const LABELS: Record<string, string> = {
-  ppg_muse_60bpm: "PPG 60",
-  ppg_muse_75bpm_offset: "PPG 75",
-  ppg_muse_110bpm_noisy: "PPG 110",
-  rppg_camera_72bpm: "rPPG 72",
-  ppg_real_rest_100hz: "Real 100 Hz",
-  ppg_real_rest_64hz: "Real 64 Hz",
-};
-
 describe("golden: rate and HRV definitions vs NeuroKit2 hrv_time", () => {
   it.each(golden.cases.filter((c) => c.definitions))("$signal: from the true beats", (c) => {
     const peaks = asPeaks(c.truthBeats!);
@@ -256,36 +243,7 @@ describe("golden: beat detection vs ground truth (Charlton 2022 scoring)", () =>
     for (const [name, beats] of Object.entries(detected)) {
       scores[name] = score(beats, referenceFor(c, beats, tolerance), tolerance);
     }
-    rec.record(`detection:${c.signal}`, { scores });
     return { c, tolerance, detected, scores };
-  });
-
-  afterAll(() => {
-    const series = (name: string, key: string, role: "package" | "field" | "reference") => ({
-      name,
-      role,
-      values: results.map((r) => r.scores[key].f1),
-    });
-    rec.compare({
-      id: "heart_rate:detection_f1",
-      group: "Heart rate",
-      title: "Beat detection F1 per signal, 10 s windows",
-      note: "F1 against the true beats (synthetic) or the ECG (real), counting a detection within 150 ms. MSPTDfast and qppgfast are the ppg-beats MATLAB run on the node's own preprocessed windows; Elgendi is NeuroKit2's default pipeline on the whole signal.",
-      kind: "bars",
-      categories: results.map((r) => LABELS[r.c.signal] ?? r.c.signal),
-      series: [
-        series("Package (MSPTDfast)", "package", "package"),
-        series("MSPTDfast (MATLAB)", "msptdfastMatlab", "reference"),
-        series("qppgfast (MATLAB)", "qppgfastMatlab", "reference"),
-        series("MSPTDfast (NeuroKit2)", "msptdfastNeurokit", "field"),
-        series("Elgendi (NeuroKit2)", "elgendiNeurokit", "field"),
-        series("Shin 2009 (previous)", "shin", "field"),
-      ],
-      yLabel: "F1",
-      yDomain: [0.8, 1],
-      tolerance: 0.1,
-      expect: "match",
-    });
   });
 
   it.each(results)("$c.signal: F1 >= 0.9, the bar Charlton et al. use for good at rest", ({ scores }) => {
@@ -340,79 +298,8 @@ describe("golden: HeartRate node vs the true rate, per 10 s window", () => {
       packetFor(w.signal, { samples: [w.start, w.stop] })
     )!.data;
 
-  afterAll(() => {
-    const categories = synthetic.map(
-      (w) => `${LABELS[w.signal] ?? w.signal} · ${(w.start / w.fs).toFixed(0)} s`
-    );
-    rec.compare({
-      id: "heart_rate:rate",
-      group: "Heart rate",
-      title: "Median heart rate per 10 s window, synthetic signals",
-      note: "HeartRate (peaks strategy) against the median rate of the true beats. At 30 Hz one sample of interval is a 2.8 bpm step, so the camera signal cannot do better than that.",
-      tolerance: 0.05,
-      kind: "bars",
-      categories,
-      series: [
-        { name: "Package", role: "package", values: synthetic.map((w) => run(w)[0]) },
-        { name: "True beats", role: "truth", values: synthetic.map((w) => w.truthMedianRate) },
-      ],
-      yLabel: "bpm",
-      expect: "match",
-    });
-    const fromBeats = (w: (typeof windows)[number], beats: number[]) =>
-      rateFromPeaks(asPeaks(beats), w.fs, { minRate: MIN_RATE, maxRate: MAX_RATE });
-    for (const signal of new Set(real.map((w) => w.signal))) {
-      const ws = real.filter((w) => w.signal === signal);
-      rec.compare({
-        id: `heart_rate:rate:${signal}`,
-        group: "Heart rate",
-        title: `Median heart rate per 10 s window, ${LABELS[signal] ?? signal} real PPG`,
-        note: "HeartRate against the ECG's median rate in the same window, with the two best detectors of Charlton et al. (2022) run on the node's preprocessed windows. Windows where the ECG reference itself is doubtful are left out.",
-        kind: "line",
-        x: ws.map((w) => w.start / w.fs),
-        series: [
-          { name: "Package", role: "package", values: ws.map((w) => run(w)[0]) },
-          { name: "MSPTDfast (MATLAB)", role: "reference", values: ws.map((w) => fromBeats(w, w.references.msptdfast)) },
-          { name: "qppgfast (MATLAB)", role: "reference", values: ws.map((w) => fromBeats(w, w.references.qppgfast)) },
-          { name: "ECG", role: "truth", values: ws.map((w) => w.truthMedianRate) },
-        ],
-        xLabel: "window start (s)",
-        yLabel: "bpm",
-        tolerance: 0.05,
-        expect: "match",
-      });
-    }
-    rec.compare({
-      id: "heart_rate:sdnn",
-      group: "Heart rate",
-      title: "SDNN per 10 s window, synthetic signals",
-      note: "SDNN takes every detected interval as given, so a false beat inflates it; a beat missed at a window edge only shortens the series. The camera signal at 30 Hz is the outlier: all its intervals are true intervals, but under heavy noise a peak lands a sample (33 ms) either side of the truth, which on a 31 ms SDNN doubles it. The test's bar there is one sample period.",
-      kind: "bars",
-      categories,
-      series: [
-        { name: "Package", role: "package", values: synthetic.map((w) => run(w, { includeVariability: true })[1]) },
-        {
-          name: "Shin 2009 (previous)",
-          role: "field",
-          values: synthetic.map((w) => run(w, { includeVariability: true, detector: "adaptive-threshold" })[1]),
-        },
-        {
-          name: "True beats",
-          role: "truth",
-          values: synthetic.map((w) => intervalVariability(asPeaks(w.truthBeats!), w.fs)),
-        },
-      ],
-      yLabel: "SDNN (ms)",
-      unit: " ms",
-      // 25% at 64 Hz; the 30 Hz camera window reaches 0.68 of the range (see note).
-      tolerance: 0.7,
-      expect: "match",
-    });
-  });
-
   it.each(synthetic)(`${label}: peaks strategy within 2 bpm of truth`, (w) => {
     const rate = run(w)[0];
-    rec.record(`rate:peaks:${w.signal}:${w.start}`, rate);
     // The rate is 60 * fs / interval-in-samples, so at a low sampling rate a
     // one-sample difference in the median interval is a large step: at 30 Hz
     // and 72 bpm (25-26 samples) it is 2.77 bpm. Where the peak lands one
@@ -433,7 +320,6 @@ describe("golden: HeartRate node vs the true rate, per 10 s window", () => {
   // (R-R 43-55 samples) that moves the median.
   it.each(real)(`${label}: peaks strategy within 5% of the ECG rate`, (w) => {
     const rate = run(w)[0];
-    rec.record(`rate:peaks:${w.signal}:${w.start}`, rate);
     expect(Math.abs(rate / w.truthMedianRate - 1)).toBeLessThanOrEqual(0.05);
   });
 
@@ -448,7 +334,6 @@ describe("golden: HeartRate node vs the true rate, per 10 s window", () => {
 
   it.each(synthetic)(`${label}: spectral strategy within half a bin of truth`, (w) => {
     const rate = run(w, { strategy: "spectral" })[0];
-    rec.record(`rate:spectral:${w.signal}:${w.start}`, rate);
     // Resolution is fs / nextPow2(n): 640 samples at 64 Hz pad to 1024, a
     // 3.75 bpm bin. Half a bin of quantisation plus 0.5 bpm for the RSA-
     // modulated rate not sitting on a bin centre.
@@ -477,7 +362,6 @@ describe("golden: HeartRate node vs the true rate, per 10 s window", () => {
   it.each(synthetic)(`${label}: SDNN within 25% or one sample period of the true beats' SDNN`, (w) => {
     const sdnn = run(w, { includeVariability: true })[1];
     const truth = intervalVariability(asPeaks(w.truthBeats!), w.fs);
-    rec.record(`sdnn:${w.signal}:${w.start}`, { package: sdnn, truth });
     expect(Math.abs(sdnn - truth)).toBeLessThanOrEqual(Math.max(0.25 * truth, 1000 / w.fs));
   });
 });

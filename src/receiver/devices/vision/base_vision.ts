@@ -13,12 +13,30 @@ export interface VisionAssetOptions {
   modelAssetPath?: string;
   /** GPU is much faster; fall back to CPU where WebGL is unavailable. */
   delegate?: "GPU" | "CPU";
-  /** Target inference rate. Frames arriving faster than this are skipped. */
+  /**
+   * Target inference rate. Frames arriving faster than this are skipped; a
+   * camera running at exactly this rate keeps every frame.
+   */
   maxFps?: number;
 }
 
 export const DEFAULT_WASM_PATH =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm";
+
+/** A landmark in 0–1 coordinates of the video frame, x right and y down. */
+export interface NormalizedPoint {
+  x: number;
+  y: number;
+  z?: number;
+}
+
+/** One frame a face tracker processed, as it hands it to in-page listeners. */
+export interface FaceFrame {
+  /** When the frame was processed, from `performance.now()`, in ms. */
+  timestampMs: number;
+  /** Landmarks of each face found, in the tracker's order. Empty when none was. */
+  faces: ReadonlyArray<ReadonlyArray<NormalizedPoint>>;
+}
 
 /**
  * Channel layout of a `face_box` stream: the top-left corner and size of the
@@ -75,12 +93,23 @@ export abstract class VisionReceiver extends BaseReceiver {
   private running = false;
   private frameHandle: number | undefined;
   private lastVideoTime = -1;
-  private lastInferenceTime = 0;
+  /** Earliest time the next frame may be processed, from performance.now(). */
+  private nextInferenceTime = 0;
 
   constructor(videoElement: HTMLVideoElement, assets: VisionAssetOptions = {}) {
     super();
     this.videoElement = videoElement;
     this.assets = { delegate: "GPU", maxFps: 30, ...assets };
+  }
+
+  /** The element this receiver reads frames from. */
+  get video(): HTMLVideoElement {
+    return this.videoElement;
+  }
+
+  /** The inference rate cap, in frames per second. */
+  get maxFps(): number {
+    return this.assets.maxFps;
   }
 
   /** Loads the tasks-vision module, with a helpful error when it is missing. */
@@ -130,6 +159,7 @@ export abstract class VisionReceiver extends BaseReceiver {
     this.stopStream();
     this.closeTask();
     this.lastVideoTime = -1;
+    this.nextInferenceTime = 0;
     this.isConnected = false;
   }
 
@@ -142,15 +172,24 @@ export abstract class VisionReceiver extends BaseReceiver {
 
     // Two guards, doing different jobs: readyState/currentTime skips frames
     // the camera has not actually advanced (rAF runs at display rate, which
-    // is usually faster than the camera), and the interval check caps
-    // inference cost independently of either.
+    // is usually faster than the camera), and the deadline caps inference
+    // cost independently of either.
+    //
+    // The deadline allows a quarter of an interval early. A frame is noticed
+    // on the first animation frame after it arrives, so a 30 fps camera's
+    // frames are seen 33.2, 33.5, 33.1 ms apart; a strict `>= 1000 / 30`
+    // would hold a frame from a camera running exactly at the cap back by a
+    // whole display refresh, more or less at random. Advancing the deadline
+    // from the previous one rather than from `now` keeps the average rate at
+    // the cap.
     if (
       video.readyState >= 2 &&
       video.currentTime !== this.lastVideoTime &&
-      now - this.lastInferenceTime >= minInterval
+      now >= this.nextInferenceTime - minInterval / 4
     ) {
       this.lastVideoTime = video.currentTime;
-      this.lastInferenceTime = now;
+      this.nextInferenceTime =
+        Math.max(this.nextInferenceTime, now - minInterval) + minInterval;
 
       try {
         this.processFrame(now);

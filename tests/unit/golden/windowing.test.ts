@@ -15,10 +15,8 @@
  */
 import "./allclose";
 import { DataPacket, Windowing } from "../../../src";
-import { inputs, packetFor, recorder } from "./harness";
+import { inputs, packetFor } from "./harness";
 
-const rec = recorder("windowing");
-afterAll(() => rec.flush());
 
 type Frames = "latest" | "all";
 
@@ -182,23 +180,6 @@ describe("golden: Windowing lag over time", () => {
     };
     const latest = lagOf("latest");
     const all = lagOf("all");
-    rec.compare({
-      id: "windowing:lag",
-      group: "Windowing",
-      title: "Lag behind real time, 2 s window with a 0.04 s hop on 12-sample Muse packets",
-      note: "Age of each emitted window's last sample when it is emitted. Both modes stay under one hop; \"all\" emits some windows in pairs.",
-      kind: "line",
-      x: latest.time,
-      series: [
-        { name: "Ideal", role: "reference", values: latest.lag.map(() => 0) },
-        { name: "Package (latest)", role: "package", values: latest.lag },
-        { name: "Package (all)", role: "package", values: all.lag, x: all.time },
-      ],
-      xLabel: "Streaming time (s)",
-      yLabel: "Lag (s)",
-      unit: " s",
-      expect: "match",
-    });
     const hop = c.hop / fs;
     expect(Math.max(...latest.lag)).toBeLessThan(hop);
     // An "all" burst's older window is one hop older than the newest.

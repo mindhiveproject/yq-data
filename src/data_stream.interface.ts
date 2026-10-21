@@ -274,6 +274,7 @@ export enum AnalysisMethod {
   SPECTROGRAM = "spectrogram",
   WAVELET_TRANSFORM = "wavelet_transform",
   ICA_DECOMPOSITION = "ica_decomposition",
+  PULSE_EXTRACTION = "pulse_extraction",
 
   // Feature Extraction
   BAND_POWER = "band_power",

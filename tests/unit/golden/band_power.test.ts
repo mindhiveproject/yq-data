@@ -9,12 +9,10 @@
  *  2. Field standard -- does the number mean what an EEG researcher would take
  *     it to mean? Reference: YASA `bandpower` (Vallat & Walker, 2021), i.e.
  *     Welch PSD integrated over each band. Judged with a stated tolerance.
- *
- * `[divergence]` tests use `divergence` (= `it.failing`); see README.md.
  */
 import "./allclose";
 import { BandPower, BandPowerParameters } from "../../../src";
-import { divergence, fixture, inputs, packetFor, recorder } from "./harness";
+import { fixture, inputs, packetFor } from "./harness";
 
 interface OwnConvention extends Required<
   Pick<BandPowerParameters, "window" | "scaling" | "aggregate" | "relative">
@@ -38,8 +36,6 @@ interface BandPowerDoc {
 }
 
 const golden = fixture<BandPowerDoc>("band_power");
-const rec = recorder("band_power");
-afterAll(() => rec.flush());
 
 /** The BandPower parameters a fixture configuration describes. */
 const params = ({ window, scaling, aggregate, relative }: OwnConvention) => ({
@@ -73,9 +69,6 @@ const YASA_RELATIVE_PER_CHANNEL_ATOL = 0.06;
 // trapezoid sum preserves power (Parseval). Alpha gets 20%.
 const YASA_ABSOLUTE_RTOL = 0.06;
 const YASA_ABSOLUTE_ALPHA_RTOL = 0.2;
-// The report judges a figure by its largest error as a fraction of the
-// reference range, which the alpha peak dominates, so it takes the alpha bar.
-const YASA_FIGURE_TOLERANCE = YASA_ABSOLUTE_ALPHA_RTOL;
 
 describe.each(golden.cases)("golden: BandPower on $signal", (c) => {
   const packet = packetFor(c.signal);
@@ -88,7 +81,6 @@ describe.each(golden.cases)("golden: BandPower on $signal", (c) => {
       "$window / $scaling / $aggregate / relative=$relative, channel average",
       (cfg) => {
         const out = run(params(cfg));
-        rec.record(`own:${c.signal}:${cfg.window}:${cfg.scaling}:${cfg.aggregate}:${cfg.relative}`, out.data);
         expect(Array.from(out.data)).toBeAllClose(cfg.channelAverage, { rtol: 1e-5 });
       }
     );
@@ -108,46 +100,10 @@ describe.each(golden.cases)("golden: BandPower on $signal", (c) => {
     const yasaAbsolute = mean(c.yasa.absolutePerChannel);
     const bandNames = Object.keys(c.bands);
 
-    afterAll(() => {
-      // The figures: the same signal through the package and YASA. Declared
-      // once the tests have run so they do not depend on which are divergences.
-      rec.compare({
-        id: `absolute:${c.signal}`,
-        group: "Band power",
-        title: `Absolute band power, ${c.signal} (channel average)`,
-        note: "Power per band in units^2. The package integrates a single periodogram exactly between the band edges (trapezoid rule); YASA integrates a Welch PSD with Simpson's rule over the bins inside the edges. Expected behaviour, not a defect: the two integrators differ most on the narrow alpha peak, where Simpson reads lower. The other bands agree closely.",
-        kind: "bars",
-        categories: bandNames,
-        series: [
-          { name: "Package default", role: "package", values: run({}).data },
-          { name: "YASA bandpower", role: "field", values: yasaAbsolute },
-        ],
-        yLabel: "Band power (units^2)",
-        expect: "match",
-        tolerance: YASA_FIGURE_TOLERANCE,
-      });
-      rec.compare({
-        id: `relative:${c.signal}`,
-        group: "Band power",
-        title: `Relative band power, ${c.signal} (channel average)`,
-        note: "Share of total power per band. The gap to YASA is expected behaviour: it comes from the narrow alpha peak, where YASA's Simpson integration reads lower than the package's trapezoid, which moves that band's share and, through the total, the others.",
-        kind: "bars",
-        categories: bandNames,
-        series: [
-          { name: "Package relative", role: "package", values: run({ relative: true }).data },
-          { name: "YASA bandpower", role: "field", values: yasaRelative },
-        ],
-        yLabel: "Share of total",
-        expect: "match",
-        tolerance: YASA_FIGURE_TOLERANCE,
-      });
-    });
-
     // The default is absolute power (psd, integrated), so `relative: true` is
     // a share of power, as YASA computes it.
     it(`default config with relative: true agrees with YASA within ${YASA_RELATIVE_ATOL}`, () => {
       const out = run({ relative: true });
-      rec.record(`yasaCompare:${c.signal}:default`, out.data);
       expect(Array.from(out.data)).toBeAllClose(yasaRelative, {
         rtol: 0,
         atol: YASA_RELATIVE_ATOL,
@@ -156,7 +112,6 @@ describe.each(golden.cases)("golden: BandPower on $signal", (c) => {
 
     it(`hann + relative agrees with YASA within ${YASA_RELATIVE_ATOL}`, () => {
       const out = run({ window: "hann", relative: true });
-      rec.record(`yasaCompare:${c.signal}:hann`, out.data);
       expect(Array.from(out.data)).toBeAllClose(yasaRelative, {
         rtol: 0,
         atol: YASA_RELATIVE_ATOL,
@@ -166,7 +121,6 @@ describe.each(golden.cases)("golden: BandPower on $signal", (c) => {
     // The default is absolute band power: the integral of the PSD, in units^2.
     it("default config is band power in units^2 (integral of the PSD)", () => {
       const out = run({});
-      rec.record(`absolute:${c.signal}`, out.data);
       expect(Array.from(out.data)).toBeAllClose(mean(c.integratedPsdPerChannel), {
         rtol: 1e-4,
       });
@@ -201,7 +155,6 @@ describe.each(golden.cases)("golden: BandPower on $signal", (c) => {
       it("perChannel + relative gives each channel's own band fractions", () => {
         const out = run({ relative: true, perChannel: true });
         const rows = perChannelRows(out.data, channels, bandCount);
-        rec.record(`perChannelRelative:${c.signal}`, rows);
         for (const row of rows) {
           expect([row.reduce((s, v) => s + v, 0)]).toBeAllClose([1], { rtol: 1e-5 });
         }

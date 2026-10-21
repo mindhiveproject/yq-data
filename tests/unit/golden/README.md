@@ -9,15 +9,18 @@ libraries the field already trusts, and says so precisely where it does not.
   YASA for EEG band power, NeuroKit2 for PPG beats and HRV, and for beat
   detection the original MATLAB of the detectors the field benchmarks
   (MSPTDfast and qppgfast from the ppg-beats toolbox, run under GNU Octave).
+  For camera rPPG, POS from the two toolboxes the field uses, pyVHR and
+  rPPG-Toolbox, run from the authors' Python.
   Synthetic signals carry their own **ground truth** (true beat locations,
   true rate). A real PPG recording is labelled from the ECG recorded with it.
   These are judged against stated, justified tolerances.
 
-**Results** live in two places. The tests are the live record: every known gap
-is a `divergence(...)` test, and `GOLDEN_STRICT=1` prints its current size.
-The to-do list of divergences (D1–D10) and the documented conventions
-(C1–C6) is in the *Open Gaps* section of the package spec in Notion, under
-*Golden-value divergences*. The literature and libraries the references come
+**Results** live in two places. The tests are the live record: run
+`npm run golden` to see every case by name. The history of divergences from the
+references (D1–D10, all closed) and the documented conventions (C1–C6) is in
+the *Open Gaps* section of the package spec in Notion, under *Golden-value
+divergences*. Comments in the tests say "Was D8" and so on where a gap was
+closed. The literature and libraries the references come
 from are listed under [References](#references) below.
 
 The reference values are computed **offline in Python** and committed as JSON.
@@ -36,98 +39,27 @@ directory is repo-only.
 | `ref_spectral.py` | Periodogram, amplitude spectrum, band power (own convention + YASA). |
 | `ref_filter.py` | Butterworth responses and coefficients, `firwin`, window functions, `lfilter`/`sosfilt` (with initial state), `filtfilt`/`sosfiltfilt` over every pad type. |
 | `ref_cardiac.py` | HRV definitions (NeuroKit2), the ppg-beats MATLAB detectors (MSPTDfast v2, qppgfast) under Octave, NeuroKit2's MSPTDfast port and PPG pipeline, ECG reference beats for the real recording. |
+| `ref_rppg.py` | POS (Wang et al., 2017) as the paper's Algorithm 1 in NumPy, pyVHR's `cpu_POS`, and rPPG-Toolbox's `POS_WANG` with its FFT heart rate, over synthetic camera skin colour with known beats. |
 | `octave/` | `run_detectors.m`, the batch driver `ref_cardiac.py` calls, and a `downsample.m` shim for Octave. The toolbox files themselves are downloaded, not committed. |
 | `fixtures/_inputs.json` | The signals, serialised. **Generated, do not hand-edit.** |
 | `fixtures/<family>.json` | Reference values, one file per method family. |
-| `harness.ts` | Fixture loading, packet building, `divergence`, `recorder`. |
+| `harness.ts` | Fixture loading, packet building, and small reference-side helpers. |
 | `allclose.ts` | `toBeAllClose`, a `numpy.allclose`-style Jest matcher. |
 | `*.test.ts` | The golden tests. Picked up by the normal `npm test`. |
-| `report.py`, `report_template.html` | Build `report/index.html` from the test run (optional); see *Comparison report*. |
-
-## Divergence tests
-
-Where the package is known to differ from the reference, the test asserts the
-**reference** behaviour and is registered with `divergence(...)`, which is
-`it.failing`. The suite stays green while the gap exists. When someone closes
-the gap, Jest reports "failing test passed". Remove the marker and tick the
-item off the spec's Open Gaps list. Every such test names its divergence ID
-(D1–D10) in a comment, and pinned conventions name theirs (C1–C6).
-
-To see the measured gaps as ordinary failures:
-
-```bash
-GOLDEN_STRICT=1 npx jest tests/unit/golden
-```
-
-## Comparison report
-
-```bash
-npm run golden:report    # runs the suite (twice), then writes report/index.html
-```
-
-The page is generated from the test run and is generic over what the suites
-declare; nothing in `report.py` or the template names a method. It shows:
-
-- **Figures**, grouped by section, for every `rec.compare(...)` a test makes.
-- **Error figures** for each one (max |Δ|, where it occurs, RMS), computed from
-  the plotted series, so no caption can state a number that has gone stale. A
-  figure whose measured error contradicts what its test declares (`expect`,
-  `tolerance`) is flagged on the page.
-- **Known divergences**: every `[divergence]` test, with the gap taken from the
-  failure message of a `GOLDEN_STRICT=1` run.
-- **Tallies** per suite, from Jest's own JSON, and any failing test.
-
-To put a new method in the report, declare a figure in its test, next to the
-numbers the test already has:
-
-```ts
-const rec = recorder("my_method");
-afterAll(() => rec.flush());
-
-rec.compare({
-  id: "my_method:case",
-  group: "My method",            // section heading
-  title: "What this shows",
-  note: "How to read it.",       // no numbers: they are computed
-  kind: "line",                  // or "bars" with `categories`
-  x: frequencies,
-  series: [
-    { name: "SciPy", role: "reference", values: expected },
-    { name: "Package", role: "package", values: actual },
-  ],
-  expect: "match",               // or "diverges" for a known gap
-});
-```
-
-Series `role` is `package`, `reference` (NumPy/SciPy), `field` (YASA,
-NeuroKit2) or `truth`; it sets the colour. See `Comparison` in `harness.ts` for
-the axis, domain, guide and tolerance options. `compare` does nothing unless
-`GOLDEN_REPORT=1`, so it costs nothing in a normal run.
-
-`report/` is git-ignored. `report.py` needs only the Python standard library.
 
 ## Running the tests
 
 Nothing special — the fixtures are committed:
 
 ```bash
-npm test
+npm test            # everything
+npm run golden      # just this suite, one line per case
 ```
 
 ## Regenerating the fixtures
 
 Only needed when a signal changes, a method's reference call changes, or you
 bump the Python libraries.
-
-With conda (see the note below):
-
-```bash
-conda env create -f tests/unit/golden/environment.yml   # first time only
-conda activate yq-golden
-python tests/unit/golden/generate.py
-```
-
-With a plain virtualenv:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -136,7 +68,7 @@ python tests/unit/golden/generate.py
 ```
 
 To rebuild one family only, name it — `python tests/unit/golden/generate.py
-filter` (or `spectral`, `stats`, `cardiac`, `rms`). That also needs only that
+filter` (or `spectral`, `stats`, `cardiac`, `rppg`, `rms`). That also needs only that
 family's libraries (the filter fixtures need just NumPy and SciPy, not YASA or
 NeuroKit2) and leaves `_inputs.json` alone.
 
@@ -147,6 +79,13 @@ commit, and `inputs.py` downloads NeuroKit2's real recording at a pinned commit.
 Both go into `.cache/` (git-ignored) and are hash-checked. The detectors are
 not committed because qppgfast is BSD-3/GPL-2 and its helpers are GPL-3.
 Because `inputs.py` reads the recording, every run needs it once.
+
+The `rppg` group also needs network access the first time. `ref_rppg.py`
+downloads pyVHR's `methods.py` and three rPPG-Toolbox files at pinned commits
+into `.cache/`, hash-checked, and runs only the named functions from them (the
+modules import cupy, torch and OpenCV at top level, which the references do not
+need). They are not committed: pyVHR is GPL-3, and rPPG-Toolbox is under the
+Responsible AI License.
 
 Then review the JSON diff and commit it. Each fixture records the exact
 library versions it was produced with under `generatedBy`. Generation is
@@ -168,9 +107,9 @@ deterministic: two runs produce byte-identical fixtures.
    assertion and a comment saying *why* that value.
 6. Start the tolerance loose (`rtol 1e-3`), then tighten. If it won't tighten,
    you've found a convention mismatch. Document it rather than widening the
-   tolerance to hide it. If it is a real gap, write the reference assertion
-   as a `divergence(...)` test, give it the next D-number in a comment and
-   add it to the spec's Open Gaps list.
+   tolerance to hide it. If it is a real gap, record it in the spec's Open
+   Gaps list with the next D-number, and either fix it or leave the test out
+   until it is fixed.
 
 ## Tolerance notes
 
@@ -193,7 +132,7 @@ deterministic: two runs produce byte-identical fixtures.
 - **Node / Jest**: already covered by the repo's `devDependencies`; the tests
   run under the existing `jest.config.ts`.
 - **Python** (regeneration only): 3.12, `numpy` 2.1, `scipy` 1.14,
-  `neurokit2` 0.2.13, `yasa` 0.7.0, pinned in `environment.yml` and
+  `neurokit2` 0.2.13, `yasa` 0.7.0, pinned in
   `requirements.txt`. YASA pulls in MNE. Nothing calls MNE directly, because
   YASA's `bandpower` is the EEG reference. The fixtures record the versions
   that actually made them (`generatedBy`). Regenerate a group with those
@@ -202,8 +141,6 @@ deterministic: two runs produce byte-identical fixtures.
 - NumPy/SciPy pins are compatible-release (`~=`). NeuroKit2 and YASA are
   pinned exactly, because their algorithms (peak detection, Welch defaults)
   feed fixture values directly.
-- You can manage the Python side with conda (`environment.yml` creates the
-  `yq-golden` env) or any virtualenv tool.
 
 ## References
 
@@ -304,6 +241,25 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
 - Tang, Q. et al. (2020). Synthetic photoplethysmogram generation using two
   Gaussian functions. *Sci Rep* 10:13883. doi:10.1038/s41598-020-69076-x.
   The pulse model for the synthetic PPG in `inputs.py`.
+
+**Camera pulse (rPPG)**
+
+- Wang, W., den Brinker, A.C., Stuijk, S. & de Haan, G. (2017). Algorithmic
+  principles of remote PPG. *IEEE Trans Biomed Eng* 64(7):1479–1491.
+  doi:10.1109/TBME.2016.2609282. POS; Algorithm 1 is the definition reference.
+- de Haan, G. & van Leest, A. (2014). Improved motion robustness of remote-PPG
+  by using the blood volume pulse signature. *Physiol Meas* 35(9):1913–1926.
+  doi:10.1088/0967-3334/35/9/1913. The per-channel pulse strengths of the
+  synthetic skin colour in `inputs.py`.
+- Verkruysse, W., Svaasand, L.O. & Nelson, J.S. (2008). Remote
+  plethysmographic imaging using ambient light. *Opt Express*
+  16(26):21434–21445. doi:10.1364/OE.16.021434. The green-channel baseline.
+- Boccignone, G. et al. (2022). pyVHR: a Python framework for remote
+  photoplethysmography. *PeerJ Comput Sci* 8:e929. doi:10.7717/peerj-cs.929.
+  `cpu_POS`.
+- Liu, X. et al. (2023). rPPG-Toolbox: Deep Remote PPG Toolbox. *NeurIPS
+  Datasets and Benchmarks*. arXiv:2210.00716. `POS_WANG` and
+  `_calculate_fft_hr`.
 
 **Other**
 

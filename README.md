@@ -105,7 +105,7 @@ A receiver owns a connection to one source and publishes packets.
 | `FaceLandmarkReceiver` | Camera | 52 expression scores, head pose, landmarks |
 | `FaceEmotionReceiver` | Camera | 7 facial expression probabilities |
 | `PoseReceiver` | Camera | 33 body landmarks |
-| `RPPGReceiver` | Camera | Pulse-bearing RGB signal from facial skin |
+| `RPPGReceiver` | Camera | Mean skin colour (R, G, B) of forehead and cheeks, for [heart rate](#heart-rate-from-a-camera) |
 | `MarkerReceiver` | Your own code | Timed [event markers](#event-markers); no device to connect |
 | `VoiceEmotionReceiver` | Microphone | 4 speech emotion probabilities, per phrase |
 | `FileReplayReceiver` | A recording | No hardware, no permissions, no network |
@@ -138,12 +138,57 @@ await camera.startStream();
 
 const face = new FaceLandmarkReceiver(videoElement);
 const emotion = new FaceEmotionReceiver(videoElement);
-const pulse = new RPPGReceiver(videoElement);
+const pulse = new RPPGReceiver(videoElement, { faceSource: face });
 ```
+
+`faceSource` lets the pulse reuse the face tracker's landmarks instead of
+running the same model a second time; without it, `RPPGReceiver` runs its own.
 
 The element must stay mounted while streaming. In a React app, mount it once
 outside the panel tree and portal previews into it — unmounting it when a tab
 changes kills the camera and every derived stream.
+
+### Heart rate from a camera
+
+Each heartbeat changes the colour of the skin by a fraction of a percent.
+`RPPGReceiver` measures that colour: every frame it averages the forehead and
+both cheeks, drawn as polygons on the face mesh so they follow the head and
+leave out the eyes, brows, nostrils and background. Its stream is three
+channels (red, green, blue) at a fixed `samplingRate`. Frames are interpolated
+onto that rate, so a camera that slows down in dim light still yields an even
+stream.
+
+The rest is a pipeline, and after `pulse` it is the same one a Muse PPG sensor
+uses:
+
+```ts
+nodes: [
+  { id: "rgb",    receiver: "rppg" },
+  { id: "pulse",  method: AnalysisMethod.PULSE_EXTRACTION },
+  { id: "window", method: AnalysisMethod.WINDOWING,  parameters: { size: 10, hop: 1 } },
+  { id: "bpm",    method: AnalysisMethod.HEART_RATE },
+]
+```
+
+`PulseExtraction` uses POS (Wang et al., 2017) by default. It divides each
+channel by its mean over a sliding 1.6 s window, then projects onto the plane
+orthogonal to the skin's colour. A change in brightness moves all three
+channels together and vanishes in that plane, while the pulse, which is
+strongest in green, does not. This is what keeps the rate right when the light
+flickers or the head moves. Its output is a `ppg` stream named `pulse`, 1.6 s
+behind the camera, with each systole a peak. It matches the paper's algorithm
+to float precision, and pyVHR and rPPG-Toolbox too, in the golden suite.
+
+POS has one cost. It mixes three channels, so it carries three channels' sensor
+noise. For a still subject in steady light on a noisy camera, especially at
+15 fps, `algorithm: "green"` (the green channel alone) has the better
+signal-to-noise ratio.
+
+When the face is lost for longer than `maxGap` (0.25 s), the stream goes
+silent and restarts when the face returns. Its packets carry a sample clock
+(`additionalMetadata.sampleClock`), so `PulseExtraction` and `Windowing` see
+the missing time and start again rather than join the two sides. The rate then
+returns once a full window has refilled.
 
 ### Emotion
 
@@ -324,6 +369,7 @@ length a visible property of the pipeline. Anything spectral needs one upstream.
 | `NORMALIZATION` | `Normalization` | Min-max, z-score, fixed range, or a decaying running range |
 | `CHANNEL_SELECTION` | `ChannelSelection` | Pick or average channels by index or label |
 | `FFT` / `PSD` | `SpectrumAnalyzer` | Per-channel spectrum |
+| `PULSE_EXTRACTION` | `PulseExtraction` | Camera skin colour to a pulse waveform (POS) |
 | `BAND_POWER` | `BandPower` | Power in named frequency bands |
 | `STATISTICAL_FEATURES` | `StatisticalFeatures` | Mean, std, RMS, min, max, range |
 | `RMS` | `RMSAnalyzer` | Amplitude, linear or dBFS |
@@ -647,6 +693,19 @@ Methods:
   Medicine*, 39(12), 1145–1152.
   [doi:10.1016/j.compbiomed.2009.10.006](https://doi.org/10.1016/j.compbiomed.2009.10.006)
   — `HEART_RATE`'s `detector: "adaptive-threshold"`.
+- Wang, W., den Brinker, A.C., Stuijk, S. & de Haan, G. (2017). Algorithmic
+  principles of remote PPG. *IEEE Transactions on Biomedical Engineering*,
+  64(7), 1479–1491.
+  [doi:10.1109/TBME.2016.2609282](https://doi.org/10.1109/TBME.2016.2609282)
+  — POS, `PULSE_EXTRACTION`'s default algorithm.
+- Verkruysse, W., Svaasand, L.O. & Nelson, J.S. (2008). Remote
+  plethysmographic imaging using ambient light. *Optics Express*, 16(26),
+  21434–21445. [doi:10.1364/OE.16.021434](https://doi.org/10.1364/OE.16.021434)
+  — the green channel alone, `PULSE_EXTRACTION`'s `algorithm: "green"`.
+- Kim, D.-Y., Lee, K. & Sohn, C.-B. (2021). Assessment of ROI Selection for
+  Facial Video-Based rPPG. *Sensors*, 21(23), 7923.
+  [doi:10.3390/s21237923](https://doi.org/10.3390/s21237923) — why
+  `RPPGReceiver` samples the forehead and the cheeks together.
 - Lugaresi, C., Tang, J., Nash, H., McClanahan, C., Uboweja, E., Hays, M.,
   Zhang, F., Chang, C.-L., Yong, M.G., Lee, J., Chang, W.-T., Hua, W., Georg, M.
   & Grundmann, M. (2019). MediaPipe: A Framework for Building Perception
@@ -658,7 +717,7 @@ Methods:
   Affective States. In *Information Systems and Neuroscience*, LNISO 10,
   157–163.
   [doi:10.1007/978-3-319-41402-7_20](https://doi.org/10.1007/978-3-319-41402-7_20)
-  — the rPPG approach `RPPGReceiver` follows, implemented in
+  — the green-channel rPPG approach of the original platform, implemented in
   [heartbeat-js](https://github.com/prouast/heartbeat-js).
 
 Software this package builds on:
