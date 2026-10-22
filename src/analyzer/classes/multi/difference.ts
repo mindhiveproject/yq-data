@@ -3,9 +3,20 @@ import {
   ChannelInfo,
   DataPacket,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
-import { getChannelCount, deinterleave, interleave } from "../../../utility";
+import {
+  Accepts,
+  EmitOptions,
+  MultiInputAnalyzer,
+  SyncParameters,
+} from "../../base_analyzer";
+import {
+  getChannelCount,
+  getStreamChannelCount,
+  deinterleave,
+  interleave,
+} from "../../../utility";
 
 export interface DifferenceParameters extends SyncParameters {
   /**
@@ -38,6 +49,38 @@ export class Difference extends MultiInputAnalyzer {
 
   readonly accepts: Record<string, Accepts> = { a: {}, b: {} };
 
+  /**
+   * Channels are named after port `a`'s, one per pair, or a single mean. The
+   * packet keeps its length, so it is a waveform exactly when both inputs are.
+   */
+  protected outputOptions(inputs: Record<string, StreamMetadata>): EmitOptions {
+    const a = inputs.a;
+    const b = inputs.b;
+    const labels = a.channelInfo;
+    const prefix =
+      this.parameters.mode === "similarity" ? "Similarity in" : "Difference in";
+    const pairs = Math.min(getStreamChannelCount(a), getStreamChannelCount(b));
+
+    const samplesPerChannel =
+      a.samplesPerChannel !== undefined && b.samplesPerChannel !== undefined
+        ? Math.min(a.samplesPerChannel, b.samplesPerChannel)
+        : undefined;
+
+    const channelInfo: ChannelInfo[] = this.parameters.summaryOnly
+      ? [{ index: 0, label: `Mean ${prefix.toLowerCase()} all` }]
+      : Array.from({ length: pairs }, (_, c) => ({
+          index: c,
+          label: `${prefix} ${labels?.[c]?.label ?? `channel ${c + 1}`}`,
+        }));
+
+    return {
+      name: "difference",
+      channelInfo,
+      samplingRate: a.samplingRate,
+      samplesPerChannel,
+    };
+  }
+
   private combine(x: number, y: number): number {
     switch (this.parameters.mode) {
       case "signed":
@@ -60,12 +103,7 @@ export class Difference extends MultiInputAnalyzer {
     const pairs = Math.min(channelsA.length, channelsB.length);
     if (pairs === 0) return null;
 
-    const labels = a.metadata.channelInfo;
-    const prefix =
-      this.parameters.mode === "similarity" ? "Similarity in" : "Difference in";
-
     const combined: Float32Array[] = [];
-    const channelInfo: ChannelInfo[] = [];
 
     for (let c = 0; c < pairs; c++) {
       const samples = Math.min(channelsA[c].length, channelsB[c].length);
@@ -74,10 +112,6 @@ export class Difference extends MultiInputAnalyzer {
         channel[i] = this.combine(channelsA[c][i], channelsB[c][i]);
       }
       combined.push(channel);
-      channelInfo.push({
-        index: c,
-        label: `${prefix} ${labels?.[c]?.label ?? `channel ${c + 1}`}`,
-      });
     }
 
     if (this.parameters.summaryOnly) {
@@ -88,17 +122,9 @@ export class Difference extends MultiInputAnalyzer {
         for (const channel of combined) sum += channel[i];
         summary[i] = sum / combined.length;
       }
-      return this.emit(a, summary, {
-        name: "difference",
-        channelInfo: [{ index: 0, label: `Mean ${prefix.toLowerCase()} all` }],
-        samplingRate: a.metadata.samplingRate,
-      });
+      return this.emitDeclared(packets, summary);
     }
 
-    return this.emit(a, interleave(combined), {
-      name: "difference",
-      channelInfo,
-      samplingRate: a.metadata.samplingRate,
-    });
+    return this.emitDeclared(packets, interleave(combined));
   }
 }

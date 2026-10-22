@@ -33,9 +33,23 @@ export function checkAccepts(
 
   if (
     accepts.requiresSamplingRate &&
-    !(meta.samplingRate !== undefined && meta.samplingRate > 0)
+    !(meta.samplingRate !== undefined && meta.samplingRate > 0) &&
+    // A rate that is merely not known yet is not a rate that is absent.
+    !meta.unresolved?.includes("samplingRate")
   ) {
     return `stream "${meta.streamID}" has no sampling rate, and this node needs a regularly sampled signal`;
+  }
+
+  if (
+    accepts.minSamplesPerChannel !== undefined &&
+    meta.samplesPerChannel !== undefined &&
+    meta.samplesPerChannel < accepts.minSamplesPerChannel
+  ) {
+    return `stream "${meta.streamID}" carries ${meta.samplesPerChannel} sample${
+      meta.samplesPerChannel === 1 ? "" : "s"
+    } per channel in each packet, and this node needs at least ${
+      accepts.minSamplesPerChannel
+    } — it measures across samples, so it wants a windowed waveform rather than a feature stream such as band power`;
   }
 
   if (accepts.modalities && !accepts.modalities.includes(meta.modality)) {

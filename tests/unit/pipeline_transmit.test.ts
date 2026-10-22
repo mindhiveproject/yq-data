@@ -281,7 +281,7 @@ describe("sink validation", () => {
     expect(issues).toEqual([
       { nodeId: "out", severity: "error", reason: "transmit node has no input" },
     ]);
-    expect(() => pipeline.validate()).toThrow(/compatibility problem/);
+    expect(() => pipeline.start({ validate: true })).toThrow(/compatibility problem/);
   });
 
   it("accepts a marker stream a numeric analyzer would refuse", async () => {

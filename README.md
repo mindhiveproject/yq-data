@@ -293,6 +293,13 @@ Receivers can be attached before or after `start()`, which matters because a
 user connects their headset long after the graph was built. Cyclic graphs and
 unknown methods are rejected at construction rather than failing at runtime.
 
+When a receiver drops, the nodes downstream of it are reset (`resetOnDisconnect`,
+on by default), so a reconnected headset does not inherit a half-full window
+from before it was unplugged. Only that receiver's part of the graph is touched:
+in a two-headset patch, one person's headset slipping off leaves the other's
+windows filling. Where the two meet, only the dropped side's input is cleared,
+so pairing resumes as soon as it returns.
+
 ### Compatibility
 
 Every analyzer declares what it will accept as data, not as a predicate:
@@ -319,12 +326,13 @@ compatibleMethods(eegMeta, registeredMethods());
 
 A whole graph can be checked at once. `issues()` returns every problem it can
 prove — an unconnected input port, or a port fed by a stream its node cannot
-read — and `validate()` throws with the full list rather than one error per
-edit-and-rerun cycle:
+read. Validation is opt-in at start: `start({ validate: true })` throws with the
+full list rather than one error per edit-and-rerun cycle, and does not start the
+graph.
 
 ```ts
 pipeline.attachReceiver("markers", markers);
-pipeline.validate();
+pipeline.start({ validate: true });
 // Error: Pipeline graph has 1 compatibility problem:
 //   - "power" port "in": stream "markers:event_marker:raw" carries labels ...
 ```
@@ -333,8 +341,8 @@ Because a source can put several streams on one wire, an edge is judged on the
 set it carries rather than one stream at a time, and each issue says how much it
 costs. Nothing usable is an `"error"` — that node will never emit. Some usable
 is a `"warning"`: the graph runs on the rest, which is the ordinary shape of a
-fat wire and matches what the runtime does with it. `validate()` throws on
-errors only; read `issues()` to show warnings.
+fat wire and matches what the runtime does with it. `start({ validate: true })`
+throws on errors only; read `issues()` to show warnings.
 
 ```ts
 pipeline.issues();
@@ -343,14 +351,53 @@ pipeline.issues();
 //               "psychopy-1:event_marker:raw" carries labels rather than ...' }]
 ```
 
-Validation judges what is knowable. A transforming node's output metadata is
-unknown until it has emitted once, so edges below a silent analyzer are checked
-at runtime instead, on the first packet through each port. Routing nodes are the
-exception: `StreamSelection` forwards packets untouched, so what leaves it is
-what reached it minus what it drops, and the pipeline resolves that statically —
-which is what makes the edge on the far side of a selector exactly checkable
-before any data flows. A port that fails at runtime is dropped and reported
-through `onError`; one bad edge should not take down the streams that work.
+#### Before any data flows
+
+The check reaches past the first node. Each analyzer also declares how it
+shapes its output — channel labels, name, rate, samples per channel — from the
+input's metadata and its own parameters, so the streams leaving a whole chain
+of nodes are worked out from the source's with nothing running. That is what
+lets a node editor refuse a bad edge, and label an output, with no headset on:
+
+```ts
+// eeg -> windowing -> band_power -> connectivity
+pipeline.attachReceiver("eeg", muse);
+pipeline.issues();
+//=> [{ nodeId: "sync", port: "a", severity: "error",
+//      reason: 'stream "muse-1:eeg:features:band_power" carries 1 sample per
+//               channel in each packet, and this node needs at least 2 — it
+//               measures across samples, so it wants a windowed waveform ...' }]
+
+pipeline.describe();
+//=> [{ nodeId: "power", streamID: "muse-1:eeg:features:band_power",
+//      channels: [{ index: 0, label: "Delta" }, { index: 1, label: "Theta" }, ...] }]
+```
+
+The declaration is the same code the node emits through, so what it says ahead
+of data and what it sends once data flows cannot drift apart. A node declares
+it by implementing `outputOptions(meta)`; one that does not is known only after
+it has emitted, and edges downstream of it are not judged until then.
+
+What cannot be known is left unknown rather than guessed. A stream's
+`samplesPerChannel` is the packet size where a device or node states it, and an
+absent value means "not declared", never "one": `Correlation` and anything else
+that sets `accepts.minSamplesPerChannel` refuses only a stream that says it is
+too short. Likewise a feature node's rate is its window's packet rate, which
+depends on how many samples the device delivers at a time; where that is not
+declared the output is marked `unresolved` and rate-dependent nodes downstream
+pass on it instead of reading its absence as "irregular".
+
+A source node can declare the streams it expects, for a peer that has not
+connected or a headset that is not on:
+
+```ts
+{ id: "wire", receive: { transport: "cloud" },
+  expects: [{ streamID: "peer:eeg:raw", modality: "eeg", samplingRate: 256,
+              channelInfo: [{ index: 0, label: "AF7" }, ...] }] }
+```
+
+These stand in until the receiver announces streams of its own, and are replaced
+by whatever it announces, so a stale declaration can never override a device.
 
 ### Windowing is explicit
 
@@ -479,6 +526,15 @@ packet within `tolerance` ms — appropriate only for sources that share a clock
 in time, for transports that buffer by different amounts — a BLE headset
 alongside a webcam.
 
+A multi-input node runs once per upstream packet, after every branch that feeds
+it has finished. That matters wherever branches split and rejoin — frontal alpha
+asymmetry splits left and right channels off one headset and rejoins them at a
+`difference` node — where a node that ran as soon as the first branch arrived
+would pair it with the other branch's *previous* packet and then run again, two
+outputs per packet, one of them stale. Source nodes reading the same receiver
+count as branches of the same split. A branch that did not emit this time (a
+window that has not filled) keeps its last value, which is what `"latest"` is for.
+
 ## Record and replay
 
 `Recorder` writes a zip of CSVs that `FileReplayReceiver` reads back. Capture a
@@ -541,7 +597,7 @@ The pipeline never acts on `record`: it builds no `Recorder`, and the named
 nodes stay ordinary outputs. `recordTargets()` resolves the ids to observables,
 skipping any that no longer name a readable node; `issues()` reports those as
 **warnings**, never errors, so a selection stored against an older graph
-degrades visibly instead of blocking `validate()`. The shape is intentionally
+degrades visibly instead of blocking `start({ validate: true })`. The shape is intentionally
 minimal — a node editor that wants per-tap settings can widen it later without
 the runtime needing to care.
 

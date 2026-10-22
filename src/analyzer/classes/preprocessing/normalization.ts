@@ -2,8 +2,9 @@ import {
   AnalysisMethod,
   DataPacket,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 import { minMaxNormalize, zScore, remap } from "../../methods/stats";
 
@@ -66,6 +67,15 @@ export class Normalization extends BaseAnalyzer {
 
   readonly accepts: Accepts = {};
 
+  /** Rescales values in place: same channels, same rate, same packet length. */
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    return {
+      name: "normalized",
+      samplingRate: meta.samplingRate,
+      samplesPerChannel: meta.samplesPerChannel,
+    };
+  }
+
   public reset(): void {
     this.runningMin = [];
     this.runningMax = [];
@@ -103,10 +113,7 @@ export class Normalization extends BaseAnalyzer {
       }
     });
 
-    return this.emit(packet, interleave(normalized), {
-      name: `normalized`,
-      samplingRate: packet.metadata.samplingRate,
-    });
+    return this.emitDeclared(packet, interleave(normalized));
   }
 
   private scale(unit: Float32Array, outMin: number, outMax: number) {

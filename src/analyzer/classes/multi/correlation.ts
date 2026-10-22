@@ -3,9 +3,19 @@ import {
   ChannelInfo,
   DataPacket,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, MultiInputAnalyzer, SyncParameters } from "../../base_analyzer";
-import { getChannelCount, deinterleave } from "../../../utility";
+import {
+  Accepts,
+  EmitOptions,
+  MultiInputAnalyzer,
+  SyncParameters,
+} from "../../base_analyzer";
+import {
+  getChannelCount,
+  getStreamChannelCount,
+  deinterleave,
+} from "../../../utility";
 import { correlation } from "../../methods/stats";
 
 export interface CorrelationParameters extends SyncParameters {
@@ -47,7 +57,66 @@ export class Correlation extends MultiInputAnalyzer {
     super({ mode: "paired", absolute: false, ...parameters });
   }
 
-  readonly accepts: Record<string, Accepts> = { a: {}, b: {} };
+  /**
+   * A correlation is taken across samples, so each input must carry a waveform
+   * of at least two: a feature stream with one value per channel — band power,
+   * say — has nothing to correlate and would never produce output.
+   */
+  readonly accepts: Record<string, Accepts> = {
+    a: { minSamplesPerChannel: 2 },
+    b: { minSamplesPerChannel: 2 },
+  };
+
+  /** One value per channel pair, or a single mean; always one sample each. */
+  protected outputOptions(inputs: Record<string, StreamMetadata>): EmitOptions {
+    const a = inputs.a;
+    const b = inputs.b;
+    const labelsA = a.channelInfo;
+    const labelsB = b.channelInfo;
+    const countA = getStreamChannelCount(a);
+    const countB = getStreamChannelCount(b);
+    const sources = [a.deviceInfo?.id ?? "A", b.deviceInfo?.id ?? "B"];
+    const shared: EmitOptions = {
+      name: "synchrony",
+      samplingRate: this.cadenceOf(a),
+      samplesPerChannel: 1,
+    };
+
+    if (this.parameters.mode === "mean") {
+      return {
+        ...shared,
+        channelInfo: [{ index: 0, label: "Synchrony" }],
+        additionalMetadata: { sources },
+      };
+    }
+
+    const channelInfo: ChannelInfo[] = [];
+    if (this.parameters.mode === "matrix") {
+      for (let i = 0; i < countA; i++) {
+        for (let j = 0; j < countB; j++) {
+          channelInfo.push({
+            index: channelInfo.length,
+            label: `${labelsA?.[i]?.label ?? `A${i + 1}`} × ${
+              labelsB?.[j]?.label ?? `B${j + 1}`
+            }`,
+          });
+        }
+      }
+    } else {
+      for (let i = 0; i < Math.min(countA, countB); i++) {
+        channelInfo.push({
+          index: i,
+          label: `${labelsA?.[i]?.label ?? `Channel ${i + 1}`} synchrony`,
+        });
+      }
+    }
+
+    return {
+      ...shared,
+      channelInfo,
+      additionalMetadata: { sources, mode: this.parameters.mode },
+    };
+  }
 
   analyze(packets: Record<string, DataPacket>): DataPacket | null {
     const a = packets.a;
@@ -63,36 +132,20 @@ export class Correlation extends MultiInputAnalyzer {
     channelsA = channelsA.map((x) => x.subarray(x.length - overlap));
     channelsB = channelsB.map((x) => x.subarray(x.length - overlap));
 
-    const labelsA = a.metadata.channelInfo;
-    const labelsB = b.metadata.channelInfo;
-    const nameA = a.metadata.deviceInfo?.id ?? "A";
-    const nameB = b.metadata.deviceInfo?.id ?? "B";
-
     const apply = (value: number) =>
       this.parameters.absolute ? Math.abs(value) : value;
 
     const values: number[] = [];
-    const channelInfo: ChannelInfo[] = [];
 
     if (this.parameters.mode === "matrix") {
       for (let i = 0; i < channelsA.length; i++) {
         for (let j = 0; j < channelsB.length; j++) {
-          channelInfo.push({
-            index: values.length,
-            label: `${labelsA?.[i]?.label ?? `A${i + 1}`} × ${
-              labelsB?.[j]?.label ?? `B${j + 1}`
-            }`,
-          });
           values.push(apply(correlation(channelsA[i], channelsB[j])));
         }
       }
     } else {
       const pairs = Math.min(channelsA.length, channelsB.length);
       for (let i = 0; i < pairs; i++) {
-        channelInfo.push({
-          index: i,
-          label: `${labelsA?.[i]?.label ?? `Channel ${i + 1}`} synchrony`,
-        });
         values.push(apply(correlation(channelsA[i], channelsB[i])));
       }
 
@@ -101,20 +154,10 @@ export class Correlation extends MultiInputAnalyzer {
           values.length > 0
             ? values.reduce((x, y) => x + y, 0) / values.length
             : 0;
-        return this.emit(a, Float32Array.of(average), {
-          name: "synchrony",
-          channelInfo: [{ index: 0, label: "Synchrony" }],
-          samplingRate: a.metadata.additionalMetadata?.packetRate,
-          additionalMetadata: { sources: [nameA, nameB] },
-        });
+        return this.emitDeclared(packets, Float32Array.of(average));
       }
     }
 
-    return this.emit(a, Float32Array.from(values), {
-      name: "synchrony",
-      channelInfo,
-      samplingRate: a.metadata.additionalMetadata?.packetRate,
-      additionalMetadata: { sources: [nameA, nameB], mode: this.parameters.mode },
-    });
+    return this.emitDeclared(packets, Float32Array.from(values));
   }
 }

@@ -4,9 +4,14 @@ import {
   DataPacket,
   Modality,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
-import { getChannelCount, deinterleave } from "../../../utility";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
+import {
+  getChannelCount,
+  getStreamChannelCount,
+  deinterleave,
+} from "../../../utility";
 import { spectrum, bandAverage, bandSum, SpectrumScaling } from "../../methods/fft";
 import { WindowType } from "../../methods/window";
 
@@ -90,6 +95,44 @@ export class BandPower extends BaseAnalyzer {
 
   readonly accepts: Accepts = { requiresSamplingRate: true };
 
+  /**
+   * Output channels are the bands, or band × electrode with `perChannel`,
+   * band-major to match the order `analyze()` fills `values` in.
+   */
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    const bandNames = Object.keys(this.parameters.bands as BandDefinitions);
+    const info = meta.channelInfo;
+
+    let channelInfo: ChannelInfo[];
+    if (this.parameters.perChannel) {
+      const channels = getStreamChannelCount(meta);
+      channelInfo = [];
+      for (const band of bandNames) {
+        for (let c = 0; c < channels; c++) {
+          channelInfo.push({
+            index: channelInfo.length,
+            label: `${band} ${info?.[c]?.label ?? c + 1}`,
+          });
+        }
+      }
+    } else {
+      channelInfo = bandNames.map((label, index) => ({ index, label }));
+    }
+
+    return {
+      modality: meta.modality ?? Modality.EEG,
+      name: "band_power",
+      channelInfo,
+      samplingRate: this.cadenceOf(meta),
+      // One value per channel per packet: a feature, not a waveform.
+      samplesPerChannel: 1,
+      additionalMetadata: {
+        bands: this.parameters.bands,
+        relative: this.parameters.relative,
+      },
+    };
+  }
+
   analyze(packet: DataPacket): DataPacket | null {
     const rate = packet.metadata.samplingRate;
     if (!rate) return null;
@@ -117,9 +160,7 @@ export class BandPower extends BaseAnalyzer {
       );
     });
 
-    const info = packet.metadata.channelInfo;
     let values: Float32Array;
-    let channelInfo: ChannelInfo[];
 
     const relative = Boolean(this.parameters.relative);
     // Fraction of the channel's own total, so each channel's bands sum to 1.
@@ -129,16 +170,10 @@ export class BandPower extends BaseAnalyzer {
 
     if (this.parameters.perChannel) {
       values = new Float32Array(bandNames.length * channels);
-      channelInfo = [];
       let index = 0;
       for (let b = 0; b < bandNames.length; b++) {
         for (let c = 0; c < channels; c++) {
-          values[index] = bandsByChannel[c][b] / channelTotals[c];
-          channelInfo.push({
-            index,
-            label: `${bandNames[b]} ${info?.[c]?.label ?? c + 1}`,
-          });
-          index++;
+          values[index++] = bandsByChannel[c][b] / channelTotals[c];
         }
       }
     } else {
@@ -155,7 +190,6 @@ export class BandPower extends BaseAnalyzer {
         }
         values[b] = sum / totalWeight;
       }
-      channelInfo = bandNames.map((label, index) => ({ index, label }));
     }
 
     if (relative && !this.parameters.perChannel) {
@@ -166,12 +200,6 @@ export class BandPower extends BaseAnalyzer {
       }
     }
 
-    return this.emit(packet, values, {
-      modality: packet.metadata.modality ?? Modality.EEG,
-      name: "band_power",
-      channelInfo,
-      samplingRate: packet.metadata.additionalMetadata?.packetRate,
-      additionalMetadata: { bands, relative: this.parameters.relative },
-    });
+    return this.emitDeclared(packet, values);
   }
 }

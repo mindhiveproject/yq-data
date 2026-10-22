@@ -167,10 +167,19 @@ export function isCategorical(meta: StreamMetadata): boolean {
 /* ordering is assumed, so every analyzer can stay layout-agnostic.            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Channel count a stream declares, falling back to channelInfo length, then 1.
+ *
+ * Takes metadata rather than a packet so a node can answer "how many channels
+ * will I emit?" before any packet exists.
+ */
+export function getStreamChannelCount(meta: StreamMetadata | undefined): number {
+  return meta?.channelCount ?? meta?.channelInfo?.length ?? 1;
+}
+
 /** Channel count for a packet, falling back to channelInfo length, then 1. */
 export function getChannelCount(packet: DataPacket<any>): number {
-  const meta = packet.metadata;
-  return meta?.channelCount ?? meta?.channelInfo?.length ?? 1;
+  return getStreamChannelCount(packet.metadata);
 }
 
 /** Number of samples per channel carried by a packet. */

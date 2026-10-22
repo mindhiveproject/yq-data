@@ -1,13 +1,17 @@
 import {
   AnalysisMethod,
-  ChannelInfo,
   DataPacket,
   Modality,
   ProcessingStage,
   StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
-import { GapDetector, getChannelCount, getSampleCount } from "../../../utility";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
+import {
+  GapDetector,
+  getChannelCount,
+  getSampleCount,
+  getStreamChannelCount,
+} from "../../../utility";
 import {
   PulseAlgorithm,
   pulseWindow,
@@ -127,6 +131,22 @@ export class PulseExtraction extends BaseAnalyzer {
     return indices.every((i) => i >= 0 && i < count) ? indices : null;
   }
 
+  /**
+   * A one-channel pulse waveform at the input's rate. How many samples each
+   * packet carries depends on how much of the window has filled, so that is
+   * left undeclared.
+   */
+  protected outputOptions(meta: StreamMetadata): EmitOptions | null {
+    // Without its colour channels there is no pulse to extract.
+    if (!this.channelIndices(meta, getStreamChannelCount(meta))) return null;
+
+    return {
+      modality: Modality.PPG,
+      name: "pulse",
+      channelInfo: [{ index: 0, label: "pulse" }],
+    };
+  }
+
   analyze(packet: DataPacket): DataPacket | null {
     const rate = packet.metadata.samplingRate;
     if (!rate) return null;
@@ -171,11 +191,7 @@ export class PulseExtraction extends BaseAnalyzer {
 
     if (out.length === 0) return null;
 
-    const channelInfo: ChannelInfo[] = [{ index: 0, label: "pulse" }];
-    return this.emit(packet, Float32Array.from(out), {
-      modality: Modality.PPG,
-      name: "pulse",
-      channelInfo,
+    return this.emitDeclared(packet, Float32Array.from(out), {
       timestamp: packet.timestamp - ((length - 1) * 1000) / rate,
     });
   }

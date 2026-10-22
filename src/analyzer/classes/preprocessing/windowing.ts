@@ -4,7 +4,7 @@ import {
   ProcessingStage,
   StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { GapDetector } from "../../../utility";
 
 export interface WindowingParameters {
@@ -93,6 +93,48 @@ export class Windowing extends BaseAnalyzer {
     return { requiresSamplingRate: this.parameters.unit !== "samples" };
   }
 
+  /**
+   * Windows of a fixed length, whose size and cadence are all known from the
+   * input stream's rate and this node's parameters.
+   *
+   * The one thing that is not is the packet rate when windows are skipped to
+   * stay current: it is the rate at which *packets* arrive, capped by the hop,
+   * so it needs the device's packet size. That is known only if the stream
+   * declares `samplesPerChannel` — or if every window is emitted, in which case
+   * the hop alone sets it. Otherwise it is left unresolved, which tells nodes
+   * downstream not to read its absence as a verdict.
+   */
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    const rate = meta.samplingRate;
+    const windowSamples = this.windowSamples(meta);
+    const hopSamples = this.hopSamples(meta);
+
+    let packetRate: number | undefined;
+    let resolved = true;
+    if (rate) {
+      const delivered =
+        this.parameters.frames === "all"
+          ? hopSamples
+          : meta.samplesPerChannel !== undefined
+          ? Math.max(hopSamples, meta.samplesPerChannel)
+          : undefined;
+      if (delivered === undefined) resolved = false;
+      else packetRate = rate / delivered;
+    }
+
+    return {
+      name: "windowed",
+      samplesPerChannel: windowSamples,
+      ...(resolved ? {} : { unresolved: ["packetRate" as const] }),
+      additionalMetadata: {
+        windowSamples,
+        hopSamples,
+        windowSeconds: rate ? windowSamples / rate : undefined,
+        packetRate,
+      },
+    };
+  }
+
   public reset(): void {
     this.buffer = [];
     this.gaps.reset();
@@ -140,7 +182,7 @@ export class Windowing extends BaseAnalyzer {
       if (!this.parameters.emitPartial) return null;
       const padded = new Float32Array(needed);
       padded.set(this.buffer);
-      return this.buildPacket(packet, padded, windowSamples, hopSamples, hopSamples);
+      return this.buildPacket(packet, padded, hopSamples);
     }
 
     const step = hopSamples * channels;
@@ -180,30 +222,23 @@ export class Windowing extends BaseAnalyzer {
 
     const rate = input.metadata.samplingRate;
     const timestamp = rate ? input.timestamp - (later * 1000) / rate : input.timestamp;
-    return this.buildPacket(input, window, windowSamples, hopSamples, deliveredHop, timestamp);
+    return this.buildPacket(input, window, deliveredHop, timestamp);
   }
 
   private buildPacket(
     input: DataPacket,
     data: Float32Array,
-    windowSamples: number,
-    hopSamples: number,
     deliveredHop: number,
     timestamp?: number
   ): DataPacket {
     const rate = input.metadata.samplingRate;
 
-    return this.emit(input, data, {
-      name: "windowed",
+    return this.emitDeclared(input, data, {
       timestamp,
-      additionalMetadata: {
-        windowSamples,
-        hopSamples,
-        windowSeconds: rate ? windowSamples / rate : undefined,
-        // How often a downstream node will see a packet. Feature analyzers
-        // publish this as their own sampling rate.
-        packetRate: rate ? rate / deliveredHop : undefined,
-      },
-    });
+      // How often a downstream node will see a packet. Feature analyzers
+      // publish this as their own sampling rate. Known here from the packet in
+      // hand, where `outputOptions` could only estimate it.
+      additionalMetadata: { packetRate: rate ? rate / deliveredHop : undefined },
+    })!;
   }
 }

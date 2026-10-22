@@ -8,10 +8,16 @@ import {
 } from "../../../data_stream.interface";
 import {
   Accepts,
+  EmitOptions,
   MultiInputAnalyzer,
   SyncParameters,
 } from "../../base_analyzer";
-import { getChannelCount, deinterleave, interleave } from "../../../utility";
+import {
+  getChannelCount,
+  getStreamChannelCount,
+  deinterleave,
+  interleave,
+} from "../../../utility";
 
 /** Upper bound on ports, so the letter naming stays unambiguous. */
 const MAX_INPUTS = 26;
@@ -91,29 +97,27 @@ export class Merge extends MultiInputAnalyzer {
     return defined.every((v) => v === defined[0]) ? defined[0] : undefined;
   }
 
-  analyze(packets: Record<string, DataPacket>): DataPacket | null {
-    const inputs = this.ports.map((port) => packets[port]);
-    if (inputs.some((packet) => !packet)) return null;
+  /**
+   * Every input's channels in port order, with labels prefixed where they
+   * collide, and a rate or modality only where the inputs agree.
+   */
+  protected outputOptions(inputs: Record<string, StreamMetadata>): EmitOptions {
+    const metas = this.ports.map((port) => inputs[port]);
 
-    const channels: Float32Array[] = [];
     const labels: string[] = [];
     const tags: string[] = [];
     const units: Array<string | undefined> = [];
 
-    inputs.forEach((packet, portIndex) => {
-      const perChannel = deinterleave(packet.data, getChannelCount(packet));
-      const info = packet.metadata.channelInfo;
-      const tag = sourceTag(packet.metadata, this.ports[portIndex]);
+    metas.forEach((meta, portIndex) => {
+      const info = meta.channelInfo;
+      const tag = sourceTag(meta, this.ports[portIndex]);
 
-      perChannel.forEach((channel, index) => {
-        channels.push(channel);
+      for (let index = 0; index < getStreamChannelCount(meta); index++) {
         labels.push(info?.[index]?.label ?? `Channel ${index + 1}`);
         tags.push(tag);
         units.push(info?.[index]?.unit);
-      });
+      }
     });
-
-    if (channels.length === 0) return null;
 
     const channelInfo: ChannelInfo[] = labels.map((label, index) => ({
       index,
@@ -121,24 +125,38 @@ export class Merge extends MultiInputAnalyzer {
       ...(units[index] ? { unit: units[index] } : {}),
     }));
 
-    const rate = this.consensus(
-      inputs.map((packet) => packet.metadata.samplingRate)
-    );
-    const modality = this.consensus(
-      inputs.map((packet) => packet.metadata.modality)
-    );
+    const rate = this.consensus(metas.map((meta) => meta.samplingRate));
+    const modality = this.consensus(metas.map((meta) => meta.modality));
 
-    return this.emit(inputs[0], interleave(channels), {
+    // Truncated to the shortest, so only knowable if every input says.
+    const lengths = metas.map((meta) => meta.samplesPerChannel);
+    const samplesPerChannel = lengths.every((n) => n !== undefined)
+      ? Math.min(...(lengths as number[]))
+      : undefined;
+
+    return {
       name: "merged",
       modality: modality ?? Modality.UNKNOWN,
       channelInfo,
       // `null` clears the rate inherited from port a, which describes only
       // port a's channels once the inputs disagree.
       samplingRate: rate ?? null,
-      additionalMetadata: {
-        sources: inputs.map((packet) => packet.streamID),
-      },
-    });
+      samplesPerChannel,
+      additionalMetadata: { sources: metas.map((meta) => meta.streamID) },
+    };
+  }
+
+  analyze(packets: Record<string, DataPacket>): DataPacket | null {
+    const inputs = this.ports.map((port) => packets[port]);
+    if (inputs.some((packet) => !packet)) return null;
+
+    const channels: Float32Array[] = [];
+    for (const packet of inputs) {
+      channels.push(...deinterleave(packet.data, getChannelCount(packet)));
+    }
+    if (channels.length === 0) return null;
+
+    return this.emitDeclared(packets, interleave(channels));
   }
 
   /** Applies the label-prefixing policy to one channel. */

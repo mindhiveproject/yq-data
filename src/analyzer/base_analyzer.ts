@@ -48,7 +48,30 @@ export interface Accepts {
    * downstream can tell it is meaningless.
    */
   valueTypes?: ValueType[];
+
+  /**
+   * Smallest number of samples per channel a packet on this input may carry.
+   *
+   * Set by nodes that measure something *across* samples — a correlation needs
+   * a waveform, and a feature stream with one value per channel gives it
+   * nothing to correlate. Checked only against a stream that declares its
+   * {@link StreamMetadata.samplesPerChannel}; one that does not is given the
+   * benefit of the doubt, because refusing on silence would reject every raw
+   * device stream.
+   */
+  minSamplesPerChannel?: number;
 }
+
+/**
+ * Stands for a sampling rate that cannot be worked out before data flows.
+ *
+ * Distinct from `null`, which states the output has no meaningful rate: this
+ * states the node has one but that it depends on something only a packet
+ * reveals (how many samples a device delivers at a time, for a windowing
+ * node). The result is flagged in {@link StreamMetadata.unresolved}, so a
+ * check downstream passes on it instead of reading it as "irregular".
+ */
+export const UNRESOLVED: unique symbol = Symbol("unresolved");
 
 /** Overrides an analyzer may apply to the packet it emits. */
 export interface EmitOptions {
@@ -69,7 +92,19 @@ export interface EmitOptions {
    * would let rate-dependent nodes downstream accept a stream they cannot
    * interpret.
    */
-  samplingRate?: number | null;
+  samplingRate?: number | null | typeof UNRESOLVED;
+  /**
+   * Samples per channel in each output packet, when the node knows it.
+   *
+   * Never inherited. A node that does not state it leaves the output's count
+   * undeclared, because a count carried over from an input that has since been
+   * through a feature extractor would describe none of what follows — a band
+   * power stream inheriting its window's 500 samples would pass for a waveform.
+   * A node that preserves the count says so explicitly.
+   */
+  samplesPerChannel?: number;
+  /** Fields this node cannot work out ahead of data. See {@link StreamMetadata.unresolved}. */
+  unresolved?: StreamMetadata["unresolved"];
   /** Explicit channel count, when there is no channel info to infer it from. */
   channelCount?: number;
   /** Metadata merged into `additionalMetadata` on the output. */
@@ -141,19 +176,39 @@ export abstract class AbstractAnalyzer {
   }
 
   /**
-   * Builds the output packet for a transformation.
+   * The rate at which this node's packets arrive, as a feature node reports it
+   * for its own output: the `packetRate` an upstream windowing node stamped,
+   * or {@link UNRESOLVED} where that is not known until data flows. Undefined
+   * when no windowing node is upstream, in which case the node inherits the
+   * input's rate.
+   */
+  protected cadenceOf(
+    meta: StreamMetadata
+  ): number | typeof UNRESOLVED | undefined {
+    const rate = meta.additionalMetadata?.packetRate;
+    if (rate !== undefined) return rate;
+    return meta.unresolved?.includes("packetRate") ? UNRESOLVED : undefined;
+  }
+
+  /**
+   * Derives the metadata of an output stream from its input's.
+   *
+   * Shared by {@link emit}, which stamps it on a packet, and by
+   * `describeOutput()`, which answers the same question before any packet
+   * exists — so a node's declared output and its live output cannot drift
+   * apart, because both come out of this one function.
    *
    * The output stream ID keeps the input's device but takes this analyzer's
    * processing stage and (by default) its method as the name — so a Muse EEG
    * stream through band power becomes `muse-1:eeg:features:band_power`, which
    * is exactly what a binding elsewhere can address.
    */
-  protected emit<Out extends TypedArray>(
-    input: DataPacket<any>,
-    data: Out,
+  protected buildMetadata(
+    inputStreamID: string,
+    input: StreamMetadata,
     options: EmitOptions = {}
-  ): DataPacket<Out> {
-    const source = stringToStreamID(input.streamID as StreamIdentifierLiteral);
+  ): StreamMetadata {
+    const source = stringToStreamID(inputStreamID as StreamIdentifierLiteral);
     const modality = options.modality ?? source.modality;
     const name = options.name ?? this.method;
 
@@ -164,16 +219,16 @@ export abstract class AbstractAnalyzer {
       name
     );
 
-    const channelInfo = options.channelInfo ?? input.metadata.channelInfo;
+    const channelInfo = options.channelInfo ?? input.channelInfo;
     const channelCount =
       options.channelCount ??
       options.channelInfo?.length ??
-      input.metadata.channelCount ??
+      input.channelCount ??
       channelInfo?.length ??
       1;
 
     const metadata: StreamMetadata = {
-      ...this.createMetadata(input.metadata, options.additionalMetadata),
+      ...this.createMetadata(input, options.additionalMetadata),
       streamID,
       modality,
       name,
@@ -185,16 +240,53 @@ export abstract class AbstractAnalyzer {
       ...(channelInfo ? { channelInfo } : {}),
     };
 
+    // The node's to state: none of these carries over from the input.
+    delete metadata.unresolved;
+    delete metadata.samplesPerChannel;
+    if (options.samplesPerChannel !== undefined) {
+      metadata.samplesPerChannel = options.samplesPerChannel;
+    }
+
+    const unresolved = new Set(options.unresolved);
+
     // Assigned after the spread rather than within it, because clearing an
     // inherited rate is not something a spread can express.
     if (options.samplingRate === null) {
       delete metadata.samplingRate;
+    } else if (options.samplingRate === UNRESOLVED) {
+      delete metadata.samplingRate;
+      unresolved.add("samplingRate");
     } else if (options.samplingRate !== undefined) {
       metadata.samplingRate = options.samplingRate;
+    } else if (input.unresolved?.includes("samplingRate")) {
+      // Inheriting a rate that was itself unknown leaves this one unknown.
+      unresolved.add("samplingRate");
     }
 
+    // The packet rate rides along in `additionalMetadata`, which is inherited,
+    // so an unknown one is inherited too — unless this node sets its own.
+    if (
+      input.unresolved?.includes("packetRate") &&
+      options.additionalMetadata?.packetRate === undefined
+    ) {
+      unresolved.add("packetRate");
+    }
+
+    if (unresolved.size > 0) metadata.unresolved = Array.from(unresolved);
+
+    return metadata;
+  }
+
+  /** Builds the output packet for a transformation. See {@link buildMetadata}. */
+  protected emit<Out extends TypedArray>(
+    input: DataPacket<any>,
+    data: Out,
+    options: EmitOptions = {}
+  ): DataPacket<Out> {
+    const metadata = this.buildMetadata(input.streamID, input.metadata, options);
+
     const packet: DataPacket<Out> = {
-      streamID,
+      streamID: metadata.streamID as StreamIdentifierLiteral,
       timestamp: options.timestamp ?? input.timestamp,
       data,
       metadata,
@@ -204,6 +296,27 @@ export abstract class AbstractAnalyzer {
     if (input.deviceTime !== undefined) packet.deviceTime = input.deviceTime;
 
     return packet;
+  }
+
+  /**
+   * Layers what a packet adds on top of what the node declares ahead of data.
+   *
+   * `additionalMetadata` is merged rather than replaced, because a node
+   * usually declares some of it up front (the bands it computes) and learns
+   * the rest from the packet (the frequencies it found).
+   */
+  protected withExtra(declared: EmitOptions, extra: EmitOptions): EmitOptions {
+    return {
+      ...declared,
+      ...extra,
+      // A live packet has nothing unresolved: whatever the declaration could
+      // not say ahead of time, the packet in hand has just said.
+      unresolved: undefined,
+      additionalMetadata:
+        declared.additionalMetadata || extra.additionalMetadata
+          ? { ...declared.additionalMetadata, ...extra.additionalMetadata }
+          : undefined,
+    };
   }
 }
 
@@ -227,6 +340,47 @@ export abstract class BaseAnalyzer<
   abstract analyze(
     packet: DataPacket<In>
   ): DataPacket<Out> | DataPacket<Out>[] | null;
+
+  /**
+   * How this node shapes its output for a given input stream, worked out from
+   * metadata and parameters alone: channel labels, name, rate, samples per
+   * channel.
+   *
+   * The one place those are decided. `analyze()` emits through
+   * {@link emitDeclared}, so what the node declares ahead of data and what it
+   * sends once data flows are the same by construction, and a node editor can
+   * show output labels, or refuse a bad edge, before any headset is on.
+   *
+   * Return `null` when the node would emit nothing for this input (a channel
+   * selection that matches no channel). Leave the method out entirely and the
+   * node simply declares nothing, which is what a custom analyzer that has not
+   * opted in should do: its output is then known only after it has emitted.
+   */
+  protected outputOptions?(meta: StreamMetadata): EmitOptions | null;
+
+  /**
+   * The metadata this node's output would carry for an input stream, before
+   * any packet exists.
+   *
+   * `undefined` means the node does not declare its output; `null` means it
+   * would emit nothing for this input.
+   */
+  public describeOutput(meta: StreamMetadata): StreamMetadata | null | undefined {
+    if (!this.outputOptions) return undefined;
+    const options = this.outputOptions(meta);
+    return options === null ? null : this.buildMetadata(meta.streamID, meta, options);
+  }
+
+  /** Emits a packet shaped by {@link outputOptions}, plus what the packet adds. */
+  protected emitDeclared<Out extends TypedArray>(
+    input: DataPacket<any>,
+    data: Out,
+    extra: EmitOptions = {}
+  ): DataPacket<Out> | null {
+    const declared = this.outputOptions?.(input.metadata);
+    if (declared === null) return null;
+    return this.emit(input, data, this.withExtra(declared ?? {}, extra));
+  }
 }
 
 /** How a multi-input node pairs packets arriving on different ports. */
@@ -349,6 +503,48 @@ export abstract class MultiInputAnalyzer<
   abstract analyze(
     packets: Record<string, DataPacket<In>>
   ): DataPacket<Out> | null;
+
+  /**
+   * How this node shapes its output for a given set of input streams, keyed by
+   * port. See {@link BaseAnalyzer.outputOptions}; the output's identity comes
+   * from the primary port.
+   */
+  protected outputOptions?(
+    inputs: Record<string, StreamMetadata>
+  ): EmitOptions | null;
+
+  /**
+   * The metadata this node's output would carry for these input streams,
+   * before any packet exists. `undefined` when the node does not declare it.
+   */
+  public describeOutput(
+    inputs: Record<string, StreamMetadata>
+  ): StreamMetadata | null | undefined {
+    if (!this.outputOptions) return undefined;
+    const options = this.outputOptions(inputs);
+    const primary = inputs[this.primaryPort];
+    return options === null || !primary
+      ? null
+      : this.buildMetadata(primary.streamID, primary, options);
+  }
+
+  /** Emits a packet shaped by {@link outputOptions}, plus what the packet adds. */
+  protected emitDeclared<Out extends TypedArray>(
+    packets: Record<string, DataPacket<any>>,
+    data: Out,
+    extra: EmitOptions = {}
+  ): DataPacket<Out> | null {
+    const metas = Object.fromEntries(
+      Object.entries(packets).map(([port, packet]) => [port, packet.metadata])
+    );
+    const declared = this.outputOptions?.(metas);
+    if (declared === null) return null;
+    return this.emit(
+      packets[this.primaryPort],
+      data,
+      this.withExtra(declared ?? {}, extra)
+    );
+  }
 }
 
 /** Any node the pipeline can evaluate. */

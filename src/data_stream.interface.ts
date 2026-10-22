@@ -168,6 +168,34 @@ export interface StreamMetadata {
    */
   channelCount?: number;
 
+  /**
+   * Samples per channel in every packet on this stream, when that is fixed.
+   *
+   * What tells a waveform (a window of many samples) from a feature (one value
+   * per channel) before any packet exists, which is how a node that needs a
+   * waveform can be refused a feature stream while the graph is still being
+   * drawn. Absent means *not declared*, never "one": most devices leave it
+   * out, and nothing is judged on a stream that does not say.
+   */
+  samplesPerChannel?: number;
+
+  /**
+   * Fields a pre-data declaration could not work out, on metadata produced by
+   * `describeOutput()`.
+   *
+   * Only ever set on metadata derived ahead of any packet — never by a
+   * receiver or on a live packet. It exists because an absent `samplingRate`
+   * normally means "irregular stream, not a time series", which is a verdict;
+   * here it can instead mean "not known yet", which is not one. Checks that
+   * would refuse on the first meaning pass on the second.
+   *
+   * `"packetRate"` is the rate at which a windowing node's packets arrive,
+   * which feature nodes downstream adopt as their own sampling rate. It
+   * depends on how many samples the device delivers at a time, which is only
+   * known once a packet has.
+   */
+  unresolved?: Array<"samplingRate" | "packetRate">;
+
   /** Optional info for data channels */
   channelInfo?: ChannelInfo[];
 

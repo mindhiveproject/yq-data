@@ -13,6 +13,7 @@ export {
   MultiInputAnalyzer,
   isMultiInput,
   isRouter,
+  UNRESOLVED,
 } from "./base_analyzer";
 export type {
   Accepts,

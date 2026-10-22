@@ -224,11 +224,11 @@ describe("Pipeline validation", () => {
     expect(issues[0].reason).toMatch(/labels rather than measurements/);
   });
 
-  it("validate() throws listing every problem", () => {
+  it("start({ validate: true }) throws listing every problem", () => {
     const pipeline = new Pipeline(graph);
     pipeline.attachReceiver("markers", connectedMarkers());
-    expect(() => pipeline.validate()).toThrow(/compatibility problem/);
-    expect(() => pipeline.validate()).toThrow(/"power"/);
+    expect(() => pipeline.start({ validate: true })).toThrow(/compatibility problem/);
+    expect(() => pipeline.start({ validate: true })).toThrow(/"power"/);
   });
 
   it("flags a multi-input node with an unconnected port", () => {

@@ -3,9 +3,14 @@ import {
   ChannelInfo,
   DataPacket,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
-import { getChannelCount, deinterleave } from "../../../utility";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
+import {
+  getChannelCount,
+  getStreamChannelCount,
+  deinterleave,
+} from "../../../utility";
 import {
   mean,
   standardDeviation,
@@ -56,34 +61,46 @@ export class StatisticalFeatures extends BaseAnalyzer {
 
   readonly accepts: Accepts = {};
 
+  /** Output channels are input channel × feature, channel-major. */
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    const features = this.parameters.features as StatisticName[];
+    const info = meta.channelInfo;
+    const channels = getStreamChannelCount(meta);
+
+    const channelInfo: ChannelInfo[] = [];
+    for (let c = 0; c < channels; c++) {
+      for (const feature of features) {
+        channelInfo.push({
+          index: channelInfo.length,
+          label: `${info?.[c]?.label ?? `Channel ${c + 1}`} ${feature}`,
+        });
+      }
+    }
+
+    return {
+      name: "statistics",
+      channelInfo,
+      samplingRate: this.cadenceOf(meta),
+      samplesPerChannel: 1,
+    };
+  }
+
   analyze(packet: DataPacket): DataPacket | null {
     const channels = getChannelCount(packet);
     const perChannel = deinterleave(packet.data, channels);
     if (perChannel.length === 0 || perChannel[0].length === 0) return null;
 
     const features = this.parameters.features as StatisticName[];
-    const info = packet.metadata.channelInfo;
-
     const values = new Float32Array(channels * features.length);
-    const channelInfo: ChannelInfo[] = [];
 
     let index = 0;
     for (let c = 0; c < channels; c++) {
       for (const feature of features) {
-        values[index] = COMPUTE[feature](perChannel[c]);
-        channelInfo.push({
-          index,
-          label: `${info?.[c]?.label ?? `Channel ${c + 1}`} ${feature}`,
-        });
-        index++;
+        values[index++] = COMPUTE[feature](perChannel[c]);
       }
     }
 
-    return this.emit(packet, values, {
-      name: "statistics",
-      channelInfo,
-      samplingRate: packet.metadata.additionalMetadata?.packetRate,
-    });
+    return this.emitDeclared(packet, values);
   }
 }
 
@@ -116,20 +133,12 @@ export class RMSAnalyzer extends BaseAnalyzer {
 
   readonly accepts: Accepts = {};
 
-  analyze(packet: DataPacket): DataPacket | null {
-    const channels = getChannelCount(packet);
-    const perChannel = deinterleave(packet.data, channels);
-    if (perChannel.length === 0 || perChannel[0].length === 0) return null;
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    const info = meta.channelInfo;
+    const channels = getStreamChannelCount(meta);
 
-    const info = packet.metadata.channelInfo;
-    const values = new Float32Array(channels);
     const channelInfo: ChannelInfo[] = [];
-
     for (let c = 0; c < channels; c++) {
-      const value = rms(perChannel[c]);
-      values[c] = this.parameters.decibels
-        ? dbfs(value, this.parameters.floor)
-        : value;
       channelInfo.push({
         index: c,
         label: `${info?.[c]?.label ?? `Channel ${c + 1}`} volume`,
@@ -137,10 +146,27 @@ export class RMSAnalyzer extends BaseAnalyzer {
       });
     }
 
-    return this.emit(packet, values, {
+    return {
       name: "rms",
       channelInfo,
-      samplingRate: packet.metadata.additionalMetadata?.packetRate,
-    });
+      samplingRate: this.cadenceOf(meta),
+      samplesPerChannel: 1,
+    };
+  }
+
+  analyze(packet: DataPacket): DataPacket | null {
+    const channels = getChannelCount(packet);
+    const perChannel = deinterleave(packet.data, channels);
+    if (perChannel.length === 0 || perChannel[0].length === 0) return null;
+
+    const values = new Float32Array(channels);
+    for (let c = 0; c < channels; c++) {
+      const value = rms(perChannel[c]);
+      values[c] = this.parameters.decibels
+        ? dbfs(value, this.parameters.floor)
+        : value;
+    }
+
+    return this.emitDeclared(packet, values);
   }
 }

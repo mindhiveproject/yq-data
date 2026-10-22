@@ -2,8 +2,9 @@ import {
   AnalysisMethod,
   DataPacket,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { getChannelCount, interleave, deinterleave } from "../../../utility";
 import {
   FilterCoefficients,
@@ -83,6 +84,15 @@ export class Filtering extends BaseAnalyzer {
 
   readonly accepts: Accepts = { requiresSamplingRate: true };
 
+  /** Filters in place: same channels, same rate, same packet length. */
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    return {
+      name: `${this.parameters.kind}`,
+      samplingRate: meta.samplingRate,
+      samplesPerChannel: meta.samplesPerChannel,
+    };
+  }
+
   public reset(): void {
     this.stages = null;
     this.designedFor = null;
@@ -140,9 +150,6 @@ export class Filtering extends BaseAnalyzer {
       this.parameters.zeroPhase ? zeroPhase(signal) : sosfilt(stages, signal, this.states[index])
     );
 
-    return this.emit(packet, interleave(filtered), {
-      name: `${this.parameters.kind}`,
-      samplingRate: rate,
-    });
+    return this.emitDeclared(packet, interleave(filtered));
   }
 }

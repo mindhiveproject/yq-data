@@ -2,8 +2,9 @@ import {
   AnalysisMethod,
   DataPacket,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 import { spectrum, SpectrumScaling } from "../../methods/fft";
 import { WindowType } from "../../methods/window";
@@ -43,6 +44,20 @@ export class SpectrumAnalyzer extends BaseAnalyzer {
 
   readonly accepts: Accepts = { requiresSamplingRate: true };
 
+  /**
+   * Bins stand in for samples, and how many there are depends on the window
+   * length the packet turns out to carry, so the count is left undeclared and
+   * the frequency axis is added from the packet.
+   */
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    return {
+      name: this.parameters.scaling === "psd" ? "psd" : "spectrum",
+      // One packet in, one packet out: the output arrives at the same rate the
+      // windows do, not at the original sample rate.
+      samplingRate: this.cadenceOf(meta),
+    };
+  }
+
   analyze(packet: DataPacket): DataPacket | null {
     const rate = packet.metadata.samplingRate;
     if (!rate) return null;
@@ -72,11 +87,7 @@ export class SpectrumAnalyzer extends BaseAnalyzer {
 
     const trimmed = spectra.map((s) => s.values.subarray(0, bins));
 
-    return this.emit(packet, interleave(trimmed), {
-      name: this.parameters.scaling === "psd" ? "psd" : "spectrum",
-      // One packet in, one packet out: the output arrives at the same rate the
-      // windows do, not at the original sample rate.
-      samplingRate: packet.metadata.additionalMetadata?.packetRate,
+    return this.emitDeclared(packet, interleave(trimmed), {
       additionalMetadata: {
         frequencies: Array.from(reference.frequencies.subarray(0, bins)),
         frequencyResolution: reference.resolution,

@@ -3,8 +3,9 @@ import {
   ChannelInfo,
   DataPacket,
   ProcessingStage,
+  StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { getChannelCount, deinterleave } from "../../../utility";
 import { sosfiltfilt } from "../../methods/filter";
 import { designFilter } from "../../methods/filter_design";
@@ -105,6 +106,23 @@ export class HeartRate extends BaseAnalyzer {
 
   readonly accepts: Accepts = { requiresSamplingRate: true };
 
+  protected outputOptions(meta: StreamMetadata): EmitOptions {
+    const channelInfo: ChannelInfo[] = [
+      { index: 0, label: "Heart Rate", unit: "bpm" },
+    ];
+    if (this.parameters.includeVariability) {
+      channelInfo.push({ index: 1, label: "SDNN", unit: "ms" });
+      channelInfo.push({ index: 2, label: "RMSSD", unit: "ms" });
+    }
+
+    return {
+      name: "heart_rate",
+      channelInfo,
+      samplingRate: this.cadenceOf(meta),
+      samplesPerChannel: 1,
+    };
+  }
+
   public reset(): void {
     this.smoothed = null;
   }
@@ -177,21 +195,12 @@ export class HeartRate extends BaseAnalyzer {
         ? estimate
         : this.smoothed * alpha + estimate * (1 - alpha);
 
-    const channelInfo: ChannelInfo[] = [
-      { index: 0, label: "Heart Rate", unit: "bpm" },
-    ];
     const values = [this.smoothed];
 
     if (this.parameters.includeVariability) {
-      channelInfo.push({ index: 1, label: "SDNN", unit: "ms" });
-      channelInfo.push({ index: 2, label: "RMSSD", unit: "ms" });
       values.push(sdnn, rmssdValue);
     }
 
-    return this.emit(packet, Float32Array.from(values), {
-      name: "heart_rate",
-      channelInfo,
-      samplingRate: packet.metadata.additionalMetadata?.packetRate,
-    });
+    return this.emitDeclared(packet, Float32Array.from(values));
   }
 }

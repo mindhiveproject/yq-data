@@ -462,7 +462,7 @@ describe("Validating a graph fed by a shared wire", () => {
 
     // The graph runs on the EEG, so refusing to start it would disagree with
     // what the runtime actually does.
-    expect(() => pipeline.validate()).not.toThrow();
+    expect(() => pipeline.start({ validate: true })).not.toThrow();
   });
 
   it("checks the edge on the far side of a selector exactly", () => {
@@ -511,7 +511,7 @@ describe("Validating a graph fed by a shared wire", () => {
     expect(issues[0].nodeId).toBe("power");
     expect(issues[0].severity).toBe("error");
     expect(issues[0].reason).toMatch(/labels rather than measurements/);
-    expect(() => pipeline.validate()).toThrow(/compatibility problem/);
+    expect(() => pipeline.start({ validate: true })).toThrow(/compatibility problem/);
   });
 });
 

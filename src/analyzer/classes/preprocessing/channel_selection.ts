@@ -5,8 +5,13 @@ import {
   ProcessingStage,
   StreamMetadata,
 } from "../../../data_stream.interface";
-import { Accepts, BaseAnalyzer } from "../../base_analyzer";
-import { getChannelCount, deinterleave, interleave } from "../../../utility";
+import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
+import {
+  getChannelCount,
+  getStreamChannelCount,
+  deinterleave,
+  interleave,
+} from "../../../utility";
 
 export interface ChannelSelectionParameters {
   /** Channel indices to keep, in output order. */
@@ -50,6 +55,39 @@ export class ChannelSelection extends BaseAnalyzer {
     );
   }
 
+  /**
+   * The chosen channels, in the order asked for — or their mean, as one
+   * channel. Nothing selected means nothing is emitted.
+   */
+  protected outputOptions(meta: StreamMetadata): EmitOptions | null {
+    const indices = this.resolveIndices(meta, getStreamChannelCount(meta));
+    if (indices.length === 0) return null;
+
+    const info = meta.channelInfo;
+    const shared: EmitOptions = {
+      name: "selected",
+      samplingRate: meta.samplingRate,
+      samplesPerChannel: meta.samplesPerChannel,
+    };
+
+    if (this.parameters.average) {
+      const label = info
+        ? `Mean of ${indices.map((i) => info[i]?.label ?? i).join(", ")}`
+        : "Mean";
+      return {
+        ...shared,
+        channelInfo: [{ index: 0, label, unit: info?.[indices[0]]?.unit }],
+      };
+    }
+
+    const channelInfo: ChannelInfo[] = indices.map((source, index) => ({
+      index,
+      label: info?.[source]?.label ?? `Channel ${source + 1}`,
+      ...(info?.[source]?.unit ? { unit: info[source].unit } : {}),
+    }));
+    return { ...shared, channelInfo };
+  }
+
   analyze(packet: DataPacket): DataPacket | null {
     const channels = getChannelCount(packet);
     const indices = this.resolveIndices(packet.metadata, channels);
@@ -57,7 +95,6 @@ export class ChannelSelection extends BaseAnalyzer {
 
     const perChannel = deinterleave(packet.data, channels);
     const selected = indices.map((index) => perChannel[index]);
-    const info = packet.metadata.channelInfo;
 
     if (this.parameters.average) {
       const samples = selected[0].length;
@@ -67,28 +104,9 @@ export class ChannelSelection extends BaseAnalyzer {
         for (const channel of selected) sum += channel[i];
         averaged[i] = sum / selected.length;
       }
-
-      const label = info
-        ? `Mean of ${indices.map((i) => info[i]?.label ?? i).join(", ")}`
-        : "Mean";
-
-      return this.emit(packet, averaged, {
-        name: "selected",
-        samplingRate: packet.metadata.samplingRate,
-        channelInfo: [{ index: 0, label, unit: info?.[indices[0]]?.unit }],
-      });
+      return this.emitDeclared(packet, averaged);
     }
 
-    const channelInfo: ChannelInfo[] = indices.map((source, index) => ({
-      index,
-      label: info?.[source]?.label ?? `Channel ${source + 1}`,
-      ...(info?.[source]?.unit ? { unit: info[source].unit } : {}),
-    }));
-
-    return this.emit(packet, interleave(selected), {
-      name: "selected",
-      samplingRate: packet.metadata.samplingRate,
-      channelInfo,
-    });
+    return this.emitDeclared(packet, interleave(selected));
   }
 }

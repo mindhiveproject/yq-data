@@ -132,7 +132,7 @@ describe("graph.record", () => {
         reason: 'graph.record names "ghost", which is not a node in this graph',
       },
     ]);
-    expect(() => pipeline.validate()).not.toThrow();
+    expect(() => pipeline.start({ validate: true })).not.toThrow();
     expect([...pipeline.recordTargets().keys()]).toEqual(["norm"]);
   });
 
