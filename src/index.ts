@@ -16,7 +16,7 @@ export * from "./manager";
 // Session capture
 export * from "./recorder/recorder";
 
-// Transports for moving streams between contexts, and the yq-data/1 wire format
+// Transports for moving streams between contexts, and the protocols spoken over them
 export * from "./transport";
 
 // Outbound streaming (the counterpart to Recorder)

@@ -100,7 +100,8 @@ describe("golden: spectrum() vs scipy.signal.periodogram", () => {
     it("psd scaling equals the periodogram (density)", () => {
       sig.channels.forEach((ch, i) => {
         const s = run(ch, "psd");
-        // Measured agreement is ~3e-8 of the peak bin. The atol is relative
+        // Measured agreement is within 6e-8 of the peak bin (float32 output
+        // rounding, not the transform). The atol is relative
         // to the peak because leakage-floor bins carry float32 noise that is
         // large relative to themselves but negligible on the spectrum's scale.
         expect(Array.from(s.values)).toBeAllClose(c.psd[i], {

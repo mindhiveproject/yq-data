@@ -1,9 +1,9 @@
 /**
  * Descriptive statistics and amplitude normalization.
  *
- * These stay dependency-free on purpose: mathjs is pulled in only for the FFT
- * (see fft.ts), and widening that import surface for a mean or a least-squares
- * solve would cost bundle size for no expressive gain.
+ * These stay dependency-free on purpose, like the rest of `methods/`: pulling
+ * in a maths library for a mean or a least-squares solve would cost bundle
+ * size for no expressive gain.
  */
 
 export function mean(x: ArrayLike<number>): number {

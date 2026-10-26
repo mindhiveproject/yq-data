@@ -14,6 +14,11 @@ import {
   Modality,
   Pipeline,
   RemoteStreamReceiver,
+  WIRE_PROTOCOL,
+  isWireMessage,
+  metaToWire,
+  packetToWire,
+  wireDecoder,
   StreamMetadata,
   StreamTransmitter,
   canConnect,
@@ -21,7 +26,12 @@ import {
   getChannelCount,
   registeredMethods,
 } from "../../src";
-import { BaseTransport } from "../../src";
+import {
+  BaseTransport,
+  Protocol,
+  createStreamProtocol,
+  streamProtocol,
+} from "../../src";
 
 const EEG_META: StreamMetadata = {
   streamID: "muse-1:eeg:raw",
@@ -279,5 +289,215 @@ describe("re-announcing on reconnect", () => {
 
     source.next(eegPacket());
     expect(transport.sent.filter((m: any) => m.type === "meta")).toHaveLength(2);
+  });
+});
+
+describe("the protocol spoken on a link", () => {
+  /** Records what is sent. */
+  class RecordingTransport extends BaseTransport {
+    readonly kind = "serial" as const;
+    readonly structuredClone = false;
+    readonly sent: unknown[] = [];
+
+    constructor() {
+      super();
+      this.setOpen(true);
+    }
+
+    send(value: unknown): void {
+      this.sent.push(value);
+    }
+  }
+
+  /** A protocol with no meta message, that splits every packet in two. */
+  const halves: Protocol = {
+    name: "halves",
+    version: 1,
+    decode: () => [],
+    encodePacket: (packet) => {
+      const data = Array.from(packet.data);
+      const mid = Math.ceil(data.length / 2);
+      return [data.slice(0, mid), data.slice(mid)];
+    },
+  };
+
+  function transmit(transport: RecordingTransport, options = {}) {
+    const source = new Subject<DataPacket>();
+    const tx = new StreamTransmitter(transport, options);
+    tx.addSource(source);
+    tx.start();
+    return source;
+  }
+
+  it("is yq-stream on a link nothing has claimed, under the tag it shipped with", () => {
+    const transport = new RecordingTransport();
+    transmit(transport).next(eegPacket());
+
+    expect(transport.sent.map((m) => (m as any).protocol)).toEqual([
+      "yq-data/1",
+      "yq-data/1",
+    ]);
+    expect(transport.sent.map((m) => (m as any).type)).toEqual(["meta", "packet"]);
+    // The tag already says the version; the old messages carried no `v`.
+    expect(transport.sent.some((m) => "v" in (m as object))).toBe(false);
+  });
+
+  it("writes the current tag when asked", () => {
+    const transport = new RecordingTransport();
+    transmit(transport, { protocol: createStreamProtocol({ emit: "current" }) }).next(
+      eegPacket()
+    );
+
+    expect(transport.sent.map((m) => [(m as any).protocol, (m as any).v])).toEqual([
+      ["yq-stream", 1],
+      ["yq-stream", 1],
+    ]);
+  });
+
+  it("is the transport's own once something has claimed it", () => {
+    const transport = new RecordingTransport();
+    transport.protocol = halves;
+    transmit(transport).next(eegPacket());
+
+    // No meta: the protocol has no such message. Two messages for one packet.
+    expect(transport.sent).toHaveLength(2);
+    expect(transport.sent.every(Array.isArray)).toBe(true);
+  });
+
+  it("follows a claim made after the transmitter was built", () => {
+    const transport = new RecordingTransport();
+    const source = transmit(transport);
+    transport.protocol = halves;
+    source.next(eegPacket());
+
+    expect(transport.sent.every(Array.isArray)).toBe(true);
+  });
+
+  it("can be overridden per transmitter", () => {
+    const transport = new RecordingTransport();
+    transport.protocol = halves;
+    transmit(transport, { protocol: streamProtocol }).next(eegPacket());
+
+    expect(transport.sent.map((m) => (m as any).type)).toEqual(["meta", "packet"]);
+  });
+
+  it("skips a packet the protocol encodes to nothing", () => {
+    const transport = new RecordingTransport();
+    transport.protocol = { ...halves, encodePacket: () => [] };
+    transmit(transport).next(eegPacket());
+
+    expect(transport.sent).toEqual([]);
+  });
+
+  it("decodes for a remote receiver too", async () => {
+    const transport = new RecordingTransport();
+    const decoded: unknown[] = [];
+    transport.protocol = {
+      ...halves,
+      decode: (value) => {
+        decoded.push(value);
+        return [];
+      },
+    };
+    const rx = new RemoteStreamReceiver(transport);
+    await rx.connect();
+    (transport as any).emit("hello");
+
+    expect(decoded).toEqual(["hello"]);
+  });
+});
+
+describe("compatibility with yq-data/1", () => {
+  const packet = {
+    protocol: "yq-data/1",
+    type: "packet",
+    streamID: "sensor-9:eeg:raw",
+    timestamp: 1,
+    channelCount: 2,
+    data: [10, 20, 30, 40],
+  };
+
+  async function receive(message: unknown) {
+    const [a, b] = MemoryTransport.pair();
+    const rx = new RemoteStreamReceiver(b);
+    await rx.connect();
+    rx.startStream();
+    const seen: DataPacket[] = [];
+    rx.data.subscribe((p) => seen.push(p));
+    a.send(message);
+    return seen;
+  }
+
+  it("reads a message tagged yq-data/1, with no v", async () => {
+    expect(await receive(packet)).toHaveLength(1);
+  });
+
+  it("reads the same message tagged yq-stream with v 1", async () => {
+    expect(await receive({ ...packet, protocol: "yq-stream", v: 1 })).toHaveLength(1);
+  });
+
+  it("ignores yq-stream from another version rather than misreading it", async () => {
+    expect(await receive({ ...packet, protocol: "yq-stream", v: 2 })).toHaveLength(0);
+    expect(await receive({ ...packet, protocol: "yq-stream" })).toHaveLength(0);
+  });
+
+  it("sends byte-for-byte what the first release sent", () => {
+    // Expected strings produced by running 47833f4's wire.ts (HEAD at the time
+    // the protocol was renamed), not written by hand.
+    const metadata: StreamMetadata = {
+      streamID: "muse-1:eeg:raw",
+      modality: Modality.EEG,
+      channelCount: 2,
+    };
+    const packet: DataPacket = {
+      streamID: "muse-1:eeg:raw",
+      timestamp: 1724716800000,
+      deviceTime: 5,
+      data: Float32Array.from([1, 2, 3, 4]),
+      metadata,
+    };
+
+    expect(JSON.stringify(streamProtocol.encodePacket(packet)[0])).toBe(
+      '{"protocol":"yq-data/1","type":"packet","streamID":"muse-1:eeg:raw",' +
+        '"timestamp":1724716800000,"channelCount":2,"data":[1,2,3,4],"deviceTime":5}'
+    );
+    expect(JSON.stringify(streamProtocol.encodeMeta!(metadata))).toBe(
+      '{"protocol":"yq-data/1","type":"meta","streamID":"muse-1:eeg:raw",' +
+        '"metadata":{"streamID":"muse-1:eeg:raw","modality":"eeg","channelCount":2}}'
+    );
+  });
+
+  it("still exports the names it had", () => {
+    expect(WIRE_PROTOCOL).toBe("yq-data/1");
+    expect(isWireMessage(packet)).toBe(true);
+    expect(wireDecoder()(packet)).toHaveLength(1);
+    expect(metaToWire({ streamID: "a:eeg:raw", modality: Modality.EEG }).type).toBe("meta");
+  });
+
+  it("still honours decode on a receiver", async () => {
+    const [a, b] = MemoryTransport.pair();
+    const decode = jest.fn(() => []);
+    const rx = new RemoteStreamReceiver(b, { decode });
+    await rx.connect();
+    a.send("anything");
+    expect(decode).toHaveBeenCalledWith("anything");
+  });
+
+  it("still honours encodePacket and encodeMeta on a transmitter", () => {
+    const [a, b] = MemoryTransport.pair();
+    const got: unknown[] = [];
+    b.onMessage((m) => got.push(m));
+    const source = new Subject<DataPacket>();
+    const tx = new StreamTransmitter(a, {
+      encodePacket: (p) => (p.streamID.endsWith("skip") ? undefined : { custom: p.streamID }),
+      encodeMeta: () => ({ meta: true }),
+    });
+    tx.addSource(source);
+    tx.start();
+
+    source.next(eegPacket());
+    source.next({ ...eegPacket(), streamID: "x:eeg:raw:skip" });
+
+    expect(got).toEqual([{ meta: true }, { custom: "muse-1:eeg:raw" }]);
   });
 });

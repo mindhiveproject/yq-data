@@ -118,9 +118,11 @@ deterministic: two runs produce byte-identical fixtures.
 - **Analyzer classes** receive a `Float32Array` and emit one. The reference is
   computed over float32-rounded input and the comparison can assert about six
   significant digits (`rtol 1e-6`), no more.
-- mathjs's FFT against SciPy's pocketfft: the periodogram agrees to ~3e-8 of
-  the peak bin, so spectral tests use `rtol 1e-5` with an absolute floor
-  relative to the peak.
+- The package's radix-2 FFT against SciPy's pocketfft: the periodogram agrees
+  to within 6e-8 of the peak bin, which is float32 rounding of the output, so
+  spectral tests use `rtol 1e-5` with an absolute floor relative to the peak.
+  (`tests/unit/fft.test.ts` checks the transform itself against a direct DFT at
+  every power-of-two length.)
 - IIR filters recurse in float32 (`lfilter` stores y in a `Float32Array`).
   Filter tests bound the error relative to output RMS instead of using `rtol`
   per sample.

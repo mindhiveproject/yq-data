@@ -11,7 +11,11 @@ export interface VisionAssetOptions {
   wasmPath?: string;
   /** URL of the `.task` model file. */
   modelAssetPath?: string;
-  /** GPU is much faster; fall back to CPU where WebGL is unavailable. */
+  /**
+   * GPU is much faster, and the default. It needs WebGL: where that is missing
+   * (some locked-down or virtualised machines) `connect()` fails, and the
+   * receiver must be built with `"CPU"` instead. Nothing falls back by itself.
+   */
   delegate?: "GPU" | "CPU";
   /**
    * Target inference rate. Frames arriving faster than this are skipped; a

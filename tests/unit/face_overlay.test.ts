@@ -20,7 +20,7 @@ import {
   MEDIAPIPE_FACE_478,
   MEDIAPIPE_FACE_CONTOURS,
   MEDIAPIPE_FACE_MESH,
-  metaToWire,
+  encodeStreamMeta,
   topologyEdges,
 } from "../../src";
 
@@ -335,7 +335,7 @@ describe("FaceOverlay", () => {
     const { canvas, calls } = fakeCanvas();
     const overlay = new FaceOverlay(canvas, { layers: { landmarks: false } });
     const streamID = "face-emotion:video:inferred:landmarks";
-    const sent = metaToWire({
+    const sent = encodeStreamMeta({
       streamID,
       modality: "video" as any,
       channelCount: 136,

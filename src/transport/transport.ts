@@ -1,4 +1,5 @@
 import { BehaviorSubject, Observable } from "rxjs";
+import type { Protocol } from "./protocol";
 
 /**
  * How a {@link Transport} moves values between two endpoints.
@@ -14,17 +15,21 @@ import { BehaviorSubject, Observable } from "rxjs";
  * - `"websocket"` — a `WebSocket`. The one transport that must encode: values
  *   are put through a {@link WireCodec} (JSON by default) on the way out and
  *   back on the way in.
+ * - `"serial"` — a Web Serial port. A byte stream, so it also owns the framing
+ *   (COBS and a CRC) around each message, and a codec (MessagePack).
  */
 export type TransportKind =
   | "memory"
   | "postMessage"
   | "broadcastChannel"
-  | "websocket";
+  | "websocket"
+  | "serial";
 
 /**
  * A bidirectional channel for values, with no knowledge of what they mean.
  *
- * `send` / `onMessage` / `close` are the whole contract. Serialization lives
+ * `send` / `onMessage` / `close` are the whole contract. What the values mean
+ * is the {@link Protocol}'s business, recorded in `protocol`. Serialization lives
  * here rather than in the packet layer: structured-clone transports carry a
  * value unchanged, and only `WebSocketTransport` reduces it to text — so a
  * caller hands the same object to every transport and the transport decides
@@ -33,6 +38,17 @@ export type TransportKind =
 export interface Transport {
   /** Which mechanism this transport is built on. */
   readonly kind: TransportKind;
+
+  /**
+   * The protocol spoken on this link, once something has claimed it. Absent
+   * means yq-stream.
+   *
+   * `StreamTransmitter` and `RemoteStreamReceiver` read it when they are not
+   * given a protocol of their own. An `ArduinoReceiver` sets it on the
+   * transport it is built on, so anything else sending on that link speaks to
+   * the board in its own protocol.
+   */
+  protocol?: Protocol;
 
   /**
    * Whether a value handed to {@link send} reaches the other side unchanged.
@@ -79,6 +95,7 @@ export interface Transport {
 export abstract class BaseTransport implements Transport {
   abstract readonly kind: TransportKind;
   abstract readonly structuredClone: boolean;
+  protocol?: Protocol;
 
   private readonly handlers = new Set<(value: unknown) => void>();
   protected readonly openSubject = new BehaviorSubject<boolean>(false);

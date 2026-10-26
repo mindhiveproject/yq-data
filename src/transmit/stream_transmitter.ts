@@ -1,18 +1,30 @@
 import { DataPacket, StreamMetadata } from "../data_stream.interface";
 import { BaseReceiver } from "../receiver/base_receiver";
 import { Transport } from "../transport/transport";
-import { metaToWire, packetToWire } from "../transport/wire";
+import { Protocol, protocolFromFunctions } from "../transport/protocol";
+import { streamProtocol } from "../transport/stream_protocol";
 import { Observable, Subscription } from "rxjs";
 
 export interface StreamTransmitterOptions {
-  /** Turns a packet into a wire message. Defaults to {@link packetToWire}. */
+  /**
+   * The protocol to speak. Defaults to the transport's own
+   * (`transport.protocol`, which an `ArduinoReceiver` sets on its link) and
+   * otherwise to yq-stream. Read on every packet, so a transport claimed after
+   * the transmitter was built is still spoken to correctly.
+   */
+  protocol?: Protocol;
+  /**
+   * @deprecated Pass a `protocol`. Turns a packet into a message; returning
+   * `undefined` skips the packet. Defaults to the protocol's own.
+   */
   encodePacket?: (packet: DataPacket) => unknown;
-  /** Turns stream metadata into a wire message. Defaults to {@link metaToWire}. */
+  /** @deprecated Pass a `protocol`. Turns metadata into a message. */
   encodeMeta?: (metadata: StreamMetadata) => unknown;
   /**
    * Send a `meta` message before a stream's first packet and whenever its
-   * metadata changes. Default `true`. Turn it off only if the consumer learns
-   * the layout some other way.
+   * metadata changes. Default `true`. Only a protocol that has such a message
+   * announces — yq-stream does, yq-arduino does not. Turn it off only if the
+   * consumer learns the layout some other way.
    */
   announceMeta?: boolean;
   /**
@@ -39,9 +51,10 @@ interface StreamState {
  *
  * The outbound counterpart to `Recorder`, and it takes the same input: any
  * `Observable<DataPacket>` — a receiver's merged output, one pipeline node's
- * output, several at once. Every packet becomes a `yq-data/1` wire message and
- * goes out the transport; a `meta` message precedes each stream and repeats on
- * change and on a timer so a late or reconnecting consumer stays in sync.
+ * output, several at once. Every packet becomes a message in the link's
+ * protocol — yq-stream unless the transport says otherwise — and goes out the
+ * transport. Under yq-stream a `meta` message precedes each stream and repeats
+ * on change and on a timer, so a late or reconnecting consumer stays in sync.
  *
  * ```ts
  * const out = new StreamTransmitter(new WebSocketTransport("ws://localhost:9000"));
@@ -58,8 +71,7 @@ interface StreamState {
  */
 export class StreamTransmitter {
   private readonly transport: Transport;
-  private readonly encodePacket: (packet: DataPacket) => unknown;
-  private readonly encodeMeta: (metadata: StreamMetadata) => unknown;
+  private readonly protocol?: Protocol;
   private readonly announceMeta: boolean;
   private readonly reannounceInterval: number;
 
@@ -71,8 +83,16 @@ export class StreamTransmitter {
 
   constructor(transport: Transport, options: StreamTransmitterOptions = {}) {
     this.transport = transport;
-    this.encodePacket = options.encodePacket ?? packetToWire;
-    this.encodeMeta = options.encodeMeta ?? metaToWire;
+    // The loose functions predate protocol objects; honour them if given.
+    this.protocol =
+      options.protocol ??
+      (options.encodePacket || options.encodeMeta
+        ? protocolFromFunctions(
+            "custom",
+            { encodePacket: options.encodePacket, encodeMeta: options.encodeMeta },
+            streamProtocol
+          )
+        : undefined);
     this.announceMeta = options.announceMeta ?? true;
     this.reannounceInterval = options.reannounceInterval ?? 5000;
   }
@@ -142,20 +162,28 @@ export class StreamTransmitter {
   private forward(packet: DataPacket): void {
     if (!this.transport.isOpen) return;
 
+    const protocol = this.protocol ?? this.transport.protocol ?? streamProtocol;
+    const messages = protocol.encodePacket(packet);
+    if (messages.length === 0) return;
+
     let state = this.streams.get(packet.streamID);
     if (!state) {
       state = { announcedAt: 0, packets: 0, samples: 0 };
       this.streams.set(packet.streamID, state);
     }
 
-    if (this.announceMeta && this.shouldAnnounce(state, packet.metadata)) {
-      this.transport.send(this.encodeMeta(packet.metadata));
+    if (
+      this.announceMeta &&
+      protocol.encodeMeta &&
+      this.shouldAnnounce(state, packet.metadata)
+    ) {
+      this.transport.send(protocol.encodeMeta(packet.metadata));
       state.announcedRef = packet.metadata;
       state.announcedJSON = JSON.stringify(packet.metadata);
       state.announcedAt = Date.now();
     }
 
-    this.transport.send(this.encodePacket(packet));
+    for (const message of messages) this.transport.send(message);
 
     state.packets += 1;
     const channels = packet.metadata.channelCount ?? 1;

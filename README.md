@@ -100,10 +100,11 @@ A receiver owns a connection to one source and publishes packets.
 | `MuseReceiver` | Muse headband | Web Bluetooth. Raw EEG at 256 Hz, PPG at 64 Hz |
 | `EMOTIVReceiver` | EMOTIV headsets | Cortex API over WebSocket; needs credentials |
 | `LSLReceiver` | Lab Streaming Layer | Via a [WebSocket relay](#lab-streaming-layer); auto-reconnects |
+| `ArduinoReceiver` | Arduino, ESP32, other [microcontrollers](#microcontrollers) | Web Serial. The board announces its own streams; also writes to the board |
 | `MicrophoneReceiver` | Microphone | AudioWorklet; raw interleaved PCM |
 | `VideoReceiver` | Camera | Lifecycle handle only — emits no packets |
-| `FaceLandmarkReceiver` | Camera | 52 expression scores, head pose, landmarks |
-| `FaceEmotionReceiver` | Camera | 7 facial expression probabilities |
+| `FaceLandmarkReceiver` | Camera | 52 expression scores (`blendshapes`), head pose; opt-in face box and 478 landmarks |
+| `FaceEmotionReceiver` | Camera | 7 facial expression probabilities; opt-in face box and landmarks |
 | `PoseReceiver` | Camera | 33 body landmarks |
 | `RPPGReceiver` | Camera | Mean skin colour (R, G, B) of forehead and cheeks, for [heart rate](#heart-rate-from-a-camera) |
 | `MarkerReceiver` | Your own code | Timed [event markers](#event-markers); no device to connect |
@@ -230,6 +231,35 @@ New work should bind to the class probabilities directly.
 Both models are trained on posed, frontal, well-lit faces and on acted or
 podcast speech. Treat their output as expressive rather than diagnostic.
 
+### Drawing faces
+
+`FaceOverlay` draws face streams onto a canvas laid over the video: the face
+box, landmarks (as points, or joined by the model's contours or full mesh), head
+pose as three axes, and the leading expression as a label.
+
+```ts
+const face = new FaceLandmarkReceiver(video, { emitFaceBox: true, emitLandmarks: true });
+
+const overlay = new FaceOverlay(canvas, { video, layers: { connections: "contours" } });
+overlay.attach(face);   // or overlay.push(packet) from a pipeline output
+overlay.start();
+```
+
+It reads **streams**, not receivers, so the same code draws a local tracker and
+one arriving from another machine through a `RemoteStreamReceiver`. The geometry
+has to be switched on at the source (`emitFaceBox`, `emitLandmarks`,
+`emitHeadPose`); the mesh's edges never travel with the data, because a stream
+names its model (`topology`) and the overlay looks the edges up. Points are
+normalised to the video frame, and the canvas should cover the video exactly:
+the overlay applies the video's `object-fit`. Pass `mirror: true` for a video
+flipped with CSS, rather than flipping the canvas too, which would mirror the
+label text.
+
+A receiver publishes nothing for a frame with no face. That silence is how a
+face leaving the frame reaches the canvas: it is cleared once its streams have
+been quiet for `staleAfter` (by default four of the stream's own packet
+intervals, the same rule as the pipeline's `maxAge`).
+
 ### Lab Streaming Layer
 
 LSL is a native protocol with no browser binding, so `LSLReceiver` does not
@@ -257,6 +287,93 @@ outlets declare a string channel format, which is the one format ordinary
 streams reject, so markers are the deliberate exception to that rule. An
 experiment marking trials from PsychoPy over LSL is indistinguishable
 downstream from one calling `mark()` in the page.
+
+### Microcontrollers
+
+`ArduinoReceiver` talks to a board running the yq-data Arduino library over a
+serial port. There is nothing to configure on this side: the board announces
+its streams — names, modalities, channel layouts, rates, scales — and they
+appear as ordinary yq-data streams.
+
+```ts
+const transport = await SerialTransport.request({ baudRate: 115200 });
+const board = new ArduinoReceiver(transport);
+await board.connect();            // opens the port and waits for the board to describe itself
+board.startStream();
+board.data.subscribe((packet) => ...);
+```
+
+`SerialTransport.request()` shows the browser's port picker and needs a click
+handler. A port the user has granted before reopens without one through
+`SerialTransport.granted()`. Chromium browsers only, like the Muse.
+
+A board can also *receive* — an LED, a motor, a servo. Those streams are its
+**sinks**, and you write to them in physical units:
+
+```ts
+board.sinks;                      // what the board accepts
+board.write("led", 255);
+board.write("rgb", [255, 0, 0]);  // interleaved, one value per channel
+```
+
+Values are quantised to the sink's format and clamped to its range, and split
+across messages if they do not fit one frame.
+
+An `ArduinoReceiver` **claims its transport**: it records on it that the link
+speaks [yq-arduino](#protocols), so anything else sending there — a
+`StreamTransmitter`, a pipeline `transmit` node — talks to the board in its own
+protocol with no options. To feed a sink from a graph, attach the receiver by
+hand like a Muse; the graph itself stays plain JSON:
+
+```ts
+const pipeline = new Pipeline({
+  nodes: [
+    { id: "pot", receiver: "board" },
+    { id: "norm", method: AnalysisMethod.NORMALIZATION,
+      parameters: { mode: "fixed", min: 0, max: 5 } },
+    { id: "out", transmit: { transport: "board" } },
+  ],
+  edges: [{ from: ["pot"], to: ["norm"] }, { from: ["norm"], to: ["out"] }],
+});
+pipeline.attachReceiver("board", board);
+pipeline.attachTransport("board", transport);
+```
+
+A packet goes to the sink named like its stream, and anything else is skipped.
+To send elsewhere, give the receiver a `route` — a table of stream IDs to sink
+names, or a function — as `new ArduinoReceiver(transport, { route })` or later
+as `board.protocol.route`. yq-arduino has no metadata message (the board
+describes its own streams), so nothing but `data` goes out.
+
+Samples cross the wire as 16-bit (or 8-bit) integers with a scale and offset,
+and are converted to `Float32Array` here. The board's own clock arrives as
+`deviceTime`, unwrapped across its 32-bit counter. A categorical stream — a
+button, say — becomes the same markers `MarkerReceiver` produces.
+
+Opening a serial port resets an Uno and most ESP32 dev boards, so
+`connect()` repeats its `hello` until the board is awake (`helloInterval`,
+default 500 ms) and gives up after `handshakeTimeout` (default 5 s) with an
+error that says what to check.
+
+`SimulatedArduino` is a board in memory: the same protocol, no hardware. It is
+what the tests run against, and it works in a demo page too:
+
+```ts
+const sim = new SimulatedArduino({
+  id: "sim-1",
+  streams: [{ name: "pot", format: "uint16", rate: 50, scale: 5 / 1024 }],
+});
+const board = new ArduinoReceiver(new SerialTransport(sim.port));
+await board.connect();
+board.startStream();
+sim.emit("pot", [2.5]);
+```
+
+`ArduinoReceiver` needs the optional `@msgpack/msgpack` peer dependency, loaded
+on connect. The protocol is specified in
+[docs/arduino-protocol.md](docs/arduino-protocol.md), with shared test vectors in
+`protocol/vectors.json` that both this package and the Arduino library are
+tested against.
 
 ## Pipelines
 
@@ -299,6 +416,24 @@ from before it was unplugged. Only that receiver's part of the graph is touched:
 in a two-headset patch, one person's headset slipping off leaves the other's
 windows filling. Where the two meet, only the dropped side's input is cleared,
 so pairing resumes as soon as it returns.
+
+A pipeline is a plain object with a small lifecycle: `stop()` stops forwarding
+and keeps the graph (`start()` resumes it), `reset()` clears every analyzer's
+buffered state, `detachReceiver(key)` unbinds one device, and `destroy()` tears
+it down for good. `getMetadata(nodeId)` returns the metadata of a node's latest
+output once it has emitted.
+
+A node that throws does not take the stream down. The error is reported and the
+packet is dropped; the next one is tried. The same goes for a stream an edge
+cannot accept, which is refused once, on its first packet, with the reason, and
+dropped from then on while the rest of the graph keeps running. Both go to
+`console.error` unless you pass `onError`:
+
+```ts
+const pipeline = new Pipeline(graph, {
+  onError: (error, nodeId) => reportToMyApp(nodeId, error),
+});
+```
 
 ### Compatibility
 
@@ -526,6 +661,13 @@ packet within `tolerance` ms — appropriate only for sources that share a clock
 in time, for transports that buffer by different amounts — a BLE headset
 alongside a webcam.
 
+A port that has gone quiet stops contributing instead of pinning the output to
+whatever it last sent. `maxAge` sets how old a packet may be, in ms, before its
+port reads as stale; `"auto"` (the default) allows four of that port's own packet
+intervals, and never less than a second, so a slow stream is not cut off. Age is
+measured against the packet that just arrived, not the wall clock, which keeps
+the rule meaningful when a recording is replayed off real time.
+
 A multi-input node runs once per upstream packet, after every branch that feeds
 it has finished. That matters wherever branches split and rejoin — frontal alpha
 asymmetry splits left and right channels off one headset and rejoins them at a
@@ -679,7 +821,8 @@ A `Transport` is a bidirectional channel for values — `send`, `onMessage`,
 | `MemoryTransport` | In-process | `MemoryTransport.pair()` — tests, and wiring a pipeline output back to a source in the same page |
 | `PostMessageTransport` | A worker or iframe | Structured clone; a `DataPacket` crosses with its `Float32Array` intact |
 | `BroadcastChannelTransport` | Same-origin contexts | Structured clone; one producer fans out to every tab on the channel name |
-| `WebSocketTransport` | A server or another machine | The only one that encodes; owns reconnection, same backoff as `LSLReceiver` |
+| `WebSocketTransport` | A server or another machine | Encodes values through a `WireCodec`; owns reconnection, same backoff as `LSLReceiver` |
+| `SerialTransport` | A microcontroller on a serial port | Web Serial. A byte stream, so it frames (COBS and a CRC-16) and encodes MessagePack; no auto-reconnect, since reopening resets the board. See [microcontrollers](#microcontrollers) |
 
 Structured-clone transports need **no codec** — the packet is the message.
 `WebSocketTransport` puts every value through a `WireCodec` (JSON by default; a
@@ -687,10 +830,28 @@ binary codec is a drop-in replacement) and, because the far end is a different
 clock, `RemoteStreamReceiver` files an incoming `timestamp` under `deviceTime`
 rather than trusting it as local time. Override with `trustRemoteClock`.
 
-### The wire format
+### Protocols
 
-`WebSocketTransport` sends the `yq-data/1` envelope — plain JSON, so a producer
-or consumer in another language needs no library:
+A transport moves values; a **protocol** says what they mean. Each layer is
+named on its own axis, so the names never compete:
+
+| Layer | Named after | Examples |
+|---|---|---|
+| Transport | the mechanism | `WebSocketTransport`, `SerialTransport`, `PostMessageTransport` |
+| Codec | the format | `jsonCodec`, `msgpackCodec` |
+| Protocol | who is on the other end | `yq-stream` (another yq-data peer), `yq-arduino` (a board) |
+
+Any protocol runs over any transport that suits it — yq-stream over a WebSocket
+or a serial cable, yq-arduino over serial, Bluetooth or an ESP32's Wi-Fi. A
+transport records the protocol spoken on it as `transport.protocol`;
+`StreamTransmitter` and `RemoteStreamReceiver` use that unless given a
+`protocol` of their own, and default to yq-stream on a link nothing has claimed.
+Versions travel as integers (`v`) and are never part of a protocol's name.
+
+### The stream protocol
+
+yq-stream is what two yq-data peers say to each other. Over a JSON WebSocket it
+is plain JSON, so a producer or consumer in another language needs no library:
 
 ```jsonc
 // announces a stream; sent before its first packet, on change, and on a timer
@@ -703,12 +864,28 @@ or consumer in another language needs no library:
   "labels": ["go"] }
 ```
 
+**The tag.** The protocol first shipped with the tag `"yq-data/1"` — name and
+version in one string — and other platforms speak it, so that is still what
+this package writes. Its name is now yq-stream, and a message may equally be
+tagged `{ "protocol": "yq-stream", "v": 1 }`; both are read, and the fields are
+identical. To write the new tag, pass
+`createStreamProtocol({ emit: "current" })` as the `protocol` of a transmitter.
+The default will move once the other platforms accept it. A message of a
+different `v` is ignored rather than misread.
+
 A consumer that only ever sees `packet` messages still reconstructs a usable
 stream: the packet names its own `streamID` and `channelCount`, and a
 well-formed `deviceID:modality:stage[:name]` ID carries the modality. A later
-`meta` upgrades that. Point a different decoder at `RemoteStreamReceiver`
-(`{ decode }`) to consume some other protocol — that is all `LSLReceiver`
-effectively is over `WebSocketTransport`.
+`meta` upgrades that.
+
+To consume some other protocol, give `RemoteStreamReceiver` a `protocol` — an
+object with `name`, `version`, `decode(value)` returning stream updates, and
+`encodePacket(packet)` returning messages (empty to send nothing). The older
+`decode`, `encodePacket` and `encodeMeta` options still work; the exports the
+protocol had before the rename (`packetToWire`, `wireDecoder`, …) remain as
+deprecated aliases. That is all
+`LSLReceiver` effectively is over `WebSocketTransport`, and all
+`ArduinoReceiver` is, plus a handshake.
 
 ## Working with the DSP directly
 
@@ -724,6 +901,80 @@ const clean = sosfiltfilt(sos, signal);        // scipy.signal.sosfiltfilt
 const spec = spectrum(clean, { samplingRate: 256, window: "hamming" });
 const alpha = bandAverage(spec, 8, 12);
 ```
+
+## Performance
+
+Everything runs on the page's main thread, so the question for a session is how
+much of one core it takes and whether any single packet takes long enough to
+stutter a display. `npm run bench` answers both on the machine it runs on. It
+feeds each chain the signal a real device delivers, in the packet sizes it
+delivers them, and reports **load**: processing time divided by signal time. 5%
+means the chain needs a twentieth of a core to keep up with a live device, and
+100% means it falls behind.
+
+Measured on an Apple M4 Pro under Node 26. That is a fast machine, so read the
+shape of these numbers rather than the digits, and run the benchmark on the
+oldest hardware you expect.
+
+| Chain | Load | Cost per second of signal |
+|---|---|---|
+| Muse EEG: bandpass → 2 s window → band power | 0.06% | 0.6 ms |
+| Muse EEG, per-channel band power, 4 s window | 0.09% | 0.9 ms |
+| Muse PPG: 10 s window → heart rate | 0.01% | 0.06 ms |
+| Muse PPG: 30 s window, every 0.25 s, with HRV | 0.04% | 0.4 ms |
+| Camera: POS → 10 s window → heart rate | 0.01% | 0.1 ms |
+| LSL, 32 ch at 1 kHz: bandpass → 2 s window → per-channel band power | 0.7% | 6.8 ms |
+
+Through a whole `Pipeline` the Muse graph costs the same, and its slowest packet
+in a minute took about 0.3 ms. Memory is flat over a simulated hour. Building,
+`issues()` and `describe()` on a 36-node graph each take under 0.1 ms, so a node
+editor can call them on every edit.
+
+What dominates, and what to expect when you change it:
+
+- **The spectrum is the one expensive primitive.** A Hamming-windowed power
+  spectrum takes 4 µs at 256 points, 31 µs at 2048 and 134 µs at 8192, and it
+  scales with the length of the window times the number of channels, once per
+  window emitted. `BandPower` and `SpectrumAnalyzer` pay it; filters, `Windowing`,
+  statistics, POS and the beat detector cost microseconds.
+- **Output rate is a knob.** A window with `hop: 0.1` emits ten times a second;
+  `hop: 0.5` costs a fifth as much and is rarely distinguishable on screen.
+- **Windows grow the buffer, not the cost per sample.** A 10 s window of 32
+  channels at 1 kHz costs about 0.3 ms to assemble.
+
+Not covered by the benchmark, because it needs a browser and a device:
+
+- **Camera receivers** are dominated by the vision model, which runs
+  synchronously on the main thread and so delays everything else on the page
+  while it runs. `maxFps` is the cost control (30 by default for MediaPipe, 15
+  for `FaceEmotionReceiver`, whose network is heavier). The default `delegate:
+  "GPU"` is much faster than `"CPU"` but needs WebGL. Where that is missing,
+  `connect()` fails and the receiver must be built with `delegate: "CPU"`.
+  `RPPGReceiver` reads pixels from a downscaled crop of the face rather than the
+  frame, and shares a `FaceLandmarkReceiver` through `faceSource` instead of
+  running the model twice.
+- **`FaceOverlay`** redraws on every animation frame. `connections: "mesh"`
+  strokes 2556 edges and is much heavier than the default contours.
+- **Microphone** audio crosses to the page in 2048-frame packets by transfer, not
+  copy; `framesPerPacket` trades latency for message count.
+
+Sending and recording have costs of their own:
+
+- **Over a `WebSocketTransport` (JSON)** a Muse's raw EEG is about 20 KB/s, and
+  a windowed 512 × 4 packet is 36 KB. The 478-point `landmarks` stream is 27 KB
+  per frame, or about 800 KB/s at 30 fps: send it at a lower `maxFps`, or supply
+  a binary `WireCodec`, rather than relying on JSON for it.
+- **`Recorder` holds every sample in memory** until you export: 4 bytes a value
+  (float32, as the samples arrive) and 8 for each sample's timestamp. That is
+  about 21 MB an hour for a Muse and about 470 MB an hour for 32 channels at
+  1 kHz. `maxSamplesPerStream` (2 million per stream by default) is counted in
+  samples per channel, so it stops a Muse after 2.2 hours but 32 channels at
+  1 kHz after 33 minutes, by which time it holds about 270 MB. Lower it for
+  dense streams. Export writes the CSV in chunks, so its size is bounded by
+  memory rather than by the length of a string, but the archive is built in
+  memory too: a 15-minute 32-channel recording peaks at about 2 GB while it
+  exports. `FileReplayReceiver` reads each CSV back as one string, so it cannot
+  open a single stream much beyond half a gigabyte of CSV.
 
 ## References and attribution
 
@@ -790,9 +1041,9 @@ Software this package builds on:
 
 ## Dependencies
 
-Runtime dependencies are `rxjs`, `muse-js` and `mathjs`. mathjs is imported
-through its factory entry points so a bundler tree-shakes everything but the
-FFT, and it is confined to `analyzer/methods/fft.ts`.
+Runtime dependencies are `rxjs` and `muse-js`. The DSP in `analyzer/methods` has
+none: the FFT behind every spectrum is a radix-2 transform in
+`analyzer/methods/fft.ts`.
 
 Five packages are **optional peer dependencies**, dynamically imported only
 when a feature that needs them is used. An application that only talks to a Muse
@@ -833,11 +1084,17 @@ source. All of it requires a secure context (`https://` or `localhost`):
 ```bash
 npm install
 npm run build      # tsup -> dist/ (CJS, ESM, .d.ts)
-npm test           # jest unit tests
-npm run test:e2e   # puppeteer
+npm test           # jest: unit tests and the golden-value suite
+npm run golden     # just the golden-value suite, one line per case
+npm run bench      # what a session costs on this machine; see Performance
 
 cd demos && npm install && npm run dev
 ```
+
+The golden suite holds the DSP to SciPy, YASA, NeuroKit2 and the authors' own
+reference code; its [README](tests/unit/golden/README.md) covers how the
+reference values are produced and how to add a method. `npm run bench` takes a
+section name to run only that part: `dsp`, `chains`, `pipeline` or `io`.
 
 The demo app is the fastest harness for working on a receiver: it aliases
 `yq-data` straight to `src/`, so edits appear on save with no rebuild. Its

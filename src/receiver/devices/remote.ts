@@ -8,11 +8,12 @@ import { BaseReceiver } from "../base_receiver";
 import { Transport } from "../../transport/transport";
 import {
   Decoded,
+  Protocol,
   StreamIdentity,
-  TransportDecoder,
   identityFromStreamID,
-  wireDecoder,
-} from "../../transport/wire";
+  protocolFromFunctions,
+} from "../../transport/protocol";
+import { streamProtocol } from "../../transport/stream_protocol";
 import { Subscription } from "rxjs";
 
 export interface RemoteStreamOptions {
@@ -22,10 +23,16 @@ export interface RemoteStreamOptions {
    */
   deviceID?: string;
   /**
-   * Turns a transport value into decoded stream updates. Defaults to the
-   * `yq-data/1` decoder; pass another to bridge a different protocol.
+   * The protocol to read. Defaults to the transport's own
+   * (`transport.protocol`) and otherwise to yq-stream; pass another to bridge
+   * a different one.
    */
-  decode?: TransportDecoder;
+  protocol?: Protocol;
+  /**
+   * @deprecated Pass a `protocol`. Turns a transport value into decoded stream
+   * updates.
+   */
+  decode?: (value: unknown) => Decoded[];
   /**
    * Treat an incoming packet's `timestamp` as this machine's clock.
    *
@@ -53,9 +60,9 @@ interface RemoteStream {
  *
  * The generic inbound counterpart to `StreamTransmitter`: give it a transport
  * and it registers and republishes whatever streams arrive, so a graph built
- * against a remote Muse looks exactly like one built against a local one. The
- * default decoder reads the `yq-data/1` wire format; `LSLReceiver` is what this
- * looks like with a relay-specific decoder wired in instead.
+ * against a remote Muse looks exactly like one built against a local one. It
+ * reads yq-stream by default; `ArduinoReceiver` is this with the yq-arduino
+ * protocol and a handshake wired in.
  *
  * ```ts
  * const remote = new RemoteStreamReceiver(new WebSocketTransport("ws://host:9000"));
@@ -73,8 +80,9 @@ export class RemoteStreamReceiver extends BaseReceiver {
   modalities: Modality[] = [Modality.UNKNOWN];
   deviceID: string | number;
 
-  private readonly transport: Transport;
-  private readonly decode: TransportDecoder;
+  protected readonly transport: Transport;
+  /** The protocol given at construction, if any. Unset means the transport's own. */
+  readonly protocol?: Protocol;
   private readonly trustRemoteClock: boolean;
   private readonly closeTransportOnDisconnect: boolean;
 
@@ -87,7 +95,11 @@ export class RemoteStreamReceiver extends BaseReceiver {
     super();
     this.transport = transport;
     this.deviceID = options.deviceID ?? "remote";
-    this.decode = options.decode ?? wireDecoder();
+    this.protocol =
+      options.protocol ??
+      (options.decode
+        ? protocolFromFunctions("custom", { decode: options.decode }, streamProtocol)
+        : undefined);
     this.trustRemoteClock =
       options.trustRemoteClock ?? transport.structuredClone;
     this.closeTransportOnDisconnect =
@@ -135,7 +147,8 @@ export class RemoteStreamReceiver extends BaseReceiver {
   private ingest(value: unknown): void {
     let updates: Decoded[];
     try {
-      updates = this.decode(value);
+      const protocol = this.protocol ?? this.transport.protocol ?? streamProtocol;
+      updates = protocol.decode(value);
     } catch {
       console.warn("RemoteStreamReceiver: dropping an undecodable message.");
       return;

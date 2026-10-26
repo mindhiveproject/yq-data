@@ -18,6 +18,9 @@ export * from "./devices/audio";
 export * from "./devices/lsl";
 export * from "./devices/file_replay";
 
+// Boards over serial or BLE, speaking yq-arduino
+export * from "./devices/arduino";
+
 // Generic inbound streams over a Transport (the counterpart to StreamTransmitter)
 export * from "./devices/remote";
 

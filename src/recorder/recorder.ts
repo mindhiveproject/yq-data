@@ -19,18 +19,56 @@ export interface RecorderOptions {
   includeTimestamps?: boolean;
 }
 
+/** log2 of the values held by one chunk of a {@link ChunkedStore}. */
+const CHUNK_SHIFT = 14;
+const CHUNK_SIZE = 1 << CHUNK_SHIFT;
+const CHUNK_MASK = CHUNK_SIZE - 1;
+
+/**
+ * An append-only list of numbers kept in fixed-size typed-array chunks.
+ *
+ * A plain `number[]` costs 8 bytes a value and reallocates as it grows; this
+ * costs 4 (as `Float32Array`) or 8 (as `Float64Array`) and never copies what
+ * it already holds. Samples arrive as float32, so storing them as float32
+ * loses nothing: the CSV is the same text either way.
+ */
+class ChunkedStore {
+  private readonly chunks: Array<Float32Array | Float64Array> = [];
+  private filled = CHUNK_SIZE;
+  length = 0;
+
+  constructor(private readonly kind: typeof Float32Array | typeof Float64Array) {}
+
+  push(value: number): void {
+    if (this.filled === CHUNK_SIZE) {
+      this.chunks.push(new this.kind(CHUNK_SIZE));
+      this.filled = 0;
+    }
+    this.chunks[this.chunks.length - 1][this.filled++] = value;
+    this.length++;
+  }
+
+  get(index: number): number {
+    return this.chunks[index >>> CHUNK_SHIFT][index & CHUNK_MASK];
+  }
+}
+
 interface Track {
   metadata: StreamMetadata;
   channels: string[];
-  /** Interleaved samples accumulated so far. */
-  rows: number[];
-  timestamps: number[];
+  /** Interleaved samples accumulated so far, as float32 unless the packets are 32-bit integers. */
+  rows: ChunkedStore;
+  /** Wall-clock time of each sample; float64, because epoch milliseconds need it. */
+  timestamps: ChunkedStore;
   /** Categorical value per sample, for streams that carry one. */
   labels: string[];
   valueType: ValueType;
   sampleCount: number;
   truncated: boolean;
 }
+
+/** Rows encoded per chunk when writing a CSV. See {@link Recorder.toCSV}. */
+const CSV_ROWS_PER_CHUNK = 4096;
 
 const README = `Hi! I'm a small file describing the contents of this folder.
 
@@ -150,8 +188,13 @@ export class Recorder {
       track = {
         metadata: packet.metadata,
         channels,
-        rows: [],
-        timestamps: [],
+        // Every packet type but the 32-bit integers is exact in float32.
+        rows: new ChunkedStore(
+          packet.data instanceof Int32Array || packet.data instanceof Uint32Array
+            ? Float64Array
+            : Float32Array
+        ),
+        timestamps: new ChunkedStore(Float64Array),
         labels: [],
         valueType: getValueType(packet.metadata),
         sampleCount: 0,
@@ -242,7 +285,16 @@ export class Recorder {
     URL.revokeObjectURL(url);
   }
 
-  private toCSV(track: Track): string {
+  /**
+   * The track as CSV bytes.
+   *
+   * Encoded a few thousand rows at a time rather than joined into one string:
+   * a JavaScript string tops out at about 536 million characters, which a
+   * 32-channel recording at 1 kHz passes after fourteen minutes. The failure
+   * would arrive as `RangeError: Invalid string length` when the session was
+   * over and the data could only be saved, so the file is never held as text.
+   */
+  private toCSV(track: Track): Uint8Array {
     const channels = track.channels.length;
     // The label column comes first on a categorical track: it is the value
     // being recorded, and the numeric code beside it is only there so the file
@@ -254,19 +306,39 @@ export class Recorder {
       ...track.channels,
     ];
 
-    const lines: string[] = [header.map(escapeCSV).join(",")];
+    const encoder = new TextEncoder();
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    let lines: string[] = [header.map(escapeCSV).join(",")];
+
+    const flush = () => {
+      // Rows are separated by a newline and the file does not end in one, so
+      // every chunk after the first opens with the separator.
+      const bytes = encoder.encode((parts.length ? "\n" : "") + lines.join("\n"));
+      parts.push(bytes);
+      size += bytes.length;
+      lines = [];
+    };
 
     for (let i = 0; i < track.sampleCount; i++) {
       const values: (string | number)[] = [];
-      if (this.options.includeTimestamps) values.push(track.timestamps[i]);
+      if (this.options.includeTimestamps) values.push(track.timestamps.get(i));
       if (categorical) values.push(escapeCSV(track.labels[i] ?? ""));
       for (let c = 0; c < channels; c++) {
-        values.push(track.rows[i * channels + c]);
+        values.push(track.rows.get(i * channels + c));
       }
       lines.push(values.join(","));
+      if (lines.length >= CSV_ROWS_PER_CHUNK) flush();
     }
+    if (lines.length > 0) flush();
 
-    return lines.join("\n");
+    const out = new Uint8Array(size);
+    let offset = 0;
+    for (const part of parts) {
+      out.set(part, offset);
+      offset += part.length;
+    }
+    return out;
   }
 }
 

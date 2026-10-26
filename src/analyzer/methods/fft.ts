@@ -1,20 +1,98 @@
 /**
  * Frequency-domain transforms.
  *
- * This is the *only* module that touches mathjs. It uses mathjs's factory
- * entry points rather than the monolithic `math` object so that a consuming
- * bundler tree-shakes everything except `fft` and its dependencies — mathjs is
- * declared as an external dependency in tsup.config.ts, so the shaking happens
- * in the app's build rather than being defeated by inlining it into dist/.
- *
- * If mathjs ever becomes too heavy to justify, replacing this file with a
- * hand-rolled radix-2 transform is the whole of the migration.
+ * The transform is an iterative radix-2 Cooley-Tukey FFT over two `Float64Array`s
+ * (real and imaginary parts), with the bit-reversal permutation and twiddle
+ * factors computed once per length and kept. It replaced mathjs's `fft`, which
+ * allocates a `Complex` object per bin per stage and was 50 to 100 times slower:
+ * a 2048-point spectrum took about 10 ms, which is a tenth of a core for a Muse
+ * and more than a core for a 32-channel LSL stream. The numbers it returns are
+ * the same to float64 rounding, which the golden suite checks against SciPy.
  */
-import { create, fftDependencies } from "mathjs";
 
 import { applyWindow, windowPower, windowSum, WindowType } from "./window";
 
-const { fft: mathFft } = create(fftDependencies, { matrix: "Array" });
+/** Everything a transform of one length needs that does not depend on the data. */
+interface FftPlan {
+  /** `cos(2πk/n)` for `k < n/2`. */
+  cos: Float64Array;
+  /** `-sin(2πk/n)` for `k < n/2`: the forward transform's twiddle, `e^(-2πik/n)`. */
+  sin: Float64Array;
+  /** Bit-reversed index of each position. */
+  reverse: Uint32Array;
+}
+
+const plans = new Map<number, FftPlan>();
+
+function planFor(n: number): FftPlan {
+  const cached = plans.get(n);
+  if (cached) return cached;
+
+  const half = n >> 1;
+  const cos = new Float64Array(half);
+  const sin = new Float64Array(half);
+  for (let k = 0; k < half; k++) {
+    // Each twiddle from its own angle rather than a running product, so error
+    // does not accumulate along the table.
+    const angle = (2 * Math.PI * k) / n;
+    cos[k] = Math.cos(angle);
+    sin[k] = -Math.sin(angle);
+  }
+
+  const bits = Math.log2(n);
+  const reverse = new Uint32Array(n);
+  for (let i = 0; i < n; i++) {
+    let r = 0;
+    for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b);
+    reverse[i] = r;
+  }
+
+  const plan = { cos, sin, reverse };
+  plans.set(n, plan);
+  return plan;
+}
+
+/**
+ * In-place forward FFT of `re + i·im`, whose length must be a power of two.
+ * Unnormalised, with the `e^(-2πikn/N)` sign convention of NumPy and SciPy.
+ */
+function fftInPlace(re: Float64Array, im: Float64Array): void {
+  const n = re.length;
+  if (n < 2) return;
+
+  const { cos, sin, reverse } = planFor(n);
+
+  for (let i = 0; i < n; i++) {
+    const j = reverse[i];
+    if (j > i) {
+      const tr = re[i];
+      re[i] = re[j];
+      re[j] = tr;
+      const ti = im[i];
+      im[i] = im[j];
+      im[j] = ti;
+    }
+  }
+
+  for (let size = 2; size <= n; size <<= 1) {
+    const half = size >> 1;
+    const stride = n / size;
+    for (let start = 0; start < n; start += size) {
+      for (let j = 0, k = 0; j < half; j++, k += stride) {
+        const wr = cos[k];
+        const wi = sin[k];
+        const a = start + j;
+        const b = a + half;
+        const tr = re[b] * wr - im[b] * wi;
+        const ti = re[b] * wi + im[b] * wr;
+        re[b] = re[a] - tr;
+        im[b] = im[a] - ti;
+        re[a] += tr;
+        im[a] += ti;
+      }
+    }
+  }
+}
 
 /** Smallest power of two greater than or equal to n. */
 export function nextPowerOfTwo(n: number): number {
@@ -25,10 +103,9 @@ export function nextPowerOfTwo(n: number): number {
 /**
  * Zero-pads a signal up to the next power of two.
  *
- * mathjs's `fft` is a radix-2 Cooley-Tukey implementation and only accepts
- * power-of-two lengths, so this is mandatory rather than an optimization. The
- * padded length is what sets the frequency resolution, and every bin-index
- * calculation downstream uses it.
+ * The radix-2 transform only accepts power-of-two lengths, so this is
+ * mandatory rather than an optimization. The padded length is what sets the
+ * frequency resolution, and every bin-index calculation downstream uses it.
  */
 export function padToPowerOfTwo(signal: ArrayLike<number>): Float32Array {
   const n = nextPowerOfTwo(signal.length);
@@ -108,12 +185,9 @@ export function spectrum(
   const padded = padToPowerOfTwo(tapered);
   const fftLength = padded.length;
 
-  // mathjs wants a plain array; its Complex results carry .re / .im. The
-  // declared return type follows the input type, so the cast is unavoidable.
-  const transformed = mathFft(Array.from(padded)) as unknown as Array<{
-    re: number;
-    im: number;
-  }>;
+  const re = Float64Array.from(padded);
+  const im = new Float64Array(fftLength);
+  fftInPlace(re, im);
 
   const bins = Math.floor(fftLength / 2);
   const values = new Float32Array(bins);
@@ -123,8 +197,7 @@ export function spectrum(
     // window length and window shape.
     const norm = samplingRate * windowPower(window, tapered.length);
     for (let i = 0; i < bins; i++) {
-      const { re, im } = transformed[i];
-      const power = re * re + im * im;
+      const power = re[i] * re[i] + im[i] * im[i];
       // Bins other than DC and Nyquist stand in for a negative-frequency twin.
       const oneSided = i === 0 ? power : 2 * power;
       values[i] = norm > 0 ? oneSided / norm : 0;
@@ -134,9 +207,9 @@ export function spectrum(
     // sinusoid's peak by sum(w), and zero padding adds nothing to it.
     const gain = windowSum(window, tapered.length);
     for (let i = 0; i < bins; i++) {
-      const { re, im } = transformed[i];
       const oneSided = i === 0 ? 1 : 2;
-      values[i] = gain > 0 ? (oneSided * Math.sqrt(re * re + im * im)) / gain : 0;
+      values[i] =
+        gain > 0 ? (oneSided * Math.sqrt(re[i] * re[i] + im[i] * im[i])) / gain : 0;
     }
   }
 
