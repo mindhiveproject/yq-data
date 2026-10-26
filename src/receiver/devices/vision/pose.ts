@@ -1,49 +1,18 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
 import {
+  MEDIAPIPE_POSE_33,
+  POSE_LANDMARK_NAMES,
+} from "../../../draw/pose_topology";
+import { flattenPoints, pointStreamMetadata } from "../../../points";
+import {
   VisionReceiver,
   VisionAssetOptions,
   DEFAULT_WASM_PATH,
+  subjectStreamName,
 } from "./base_vision";
 
 const DEFAULT_MODEL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
-
-/** The 33 body landmarks MediaPipe reports, in index order. */
-export const POSE_LANDMARK_NAMES = [
-  "nose",
-  "left eye (inner)",
-  "left eye",
-  "left eye (outer)",
-  "right eye (inner)",
-  "right eye",
-  "right eye (outer)",
-  "left ear",
-  "right ear",
-  "mouth (left)",
-  "mouth (right)",
-  "left shoulder",
-  "right shoulder",
-  "left elbow",
-  "right elbow",
-  "left wrist",
-  "right wrist",
-  "left pinky",
-  "right pinky",
-  "left index",
-  "right index",
-  "left thumb",
-  "right thumb",
-  "left hip",
-  "right hip",
-  "left knee",
-  "right knee",
-  "left ankle",
-  "right ankle",
-  "left heel",
-  "right heel",
-  "left foot index",
-  "right foot index",
-];
 
 export interface PoseOptions extends VisionAssetOptions {
   /** People to track. */
@@ -64,7 +33,9 @@ export interface PoseOptions extends VisionAssetOptions {
  * Body tracking via MediaPipe Pose Landmarker.
  *
  * Emits one stream of 33 landmarks flattened to x, y, z (and optionally
- * visibility) per landmark, with channels labelled "left wrist x" and so on.
+ * visibility) per landmark. The stream declares its stride and topology rather
+ * than labelling every value; `pointChannelGroups` turns that into
+ * "left wrist" and the indices of its components.
  *
  * Lugaresi, C. et al. (2019). MediaPipe: A Framework for Building Perception
  * Pipelines. arXiv:1906.08172. https://arxiv.org/abs/1906.08172
@@ -122,30 +93,22 @@ export class PoseReceiver extends VisionReceiver {
   }
 
   private streamName(pose: number): string {
-    return this.options.numPoses > 1 ? `landmarks_pose_${pose + 1}` : "landmarks";
+    return subjectStreamName("landmarks", "pose", pose, this.options.numPoses);
   }
 
   private registerStream(pose: number): void {
-    const name = this.streamName(pose);
-    const components = this.components;
-    const channelInfo = [];
-    let index = 0;
-    for (const landmark of POSE_LANDMARK_NAMES) {
-      for (const component of components) {
-        channelInfo.push({ index: index++, label: `${landmark} ${component}` });
-      }
-    }
-
     this.ensureStream({
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.INFERRED,
-      name,
+      name: this.streamName(pose),
       additionalMetadata: {
         samplingRate: this.assets.maxFps,
-        channelInfo,
-        additionalMetadata: {
-          coordinateSpace: this.options.worldCoordinates ? "world" : "image",
-        },
+        ...pointStreamMetadata(
+          POSE_LANDMARK_NAMES.length,
+          this.components,
+          MEDIAPIPE_POSE_33,
+          this.options.worldCoordinates ? "world" : "image"
+        ),
       },
     });
   }
@@ -168,26 +131,13 @@ export class PoseReceiver extends VisionReceiver {
       const points = sets[pose];
       if (!points || points.length === 0) continue;
 
-      const flat = new Float32Array(POSE_LANDMARK_NAMES.length * components.length);
-      for (let i = 0; i < POSE_LANDMARK_NAMES.length; i++) {
-        const point = points[i];
-        if (!point) continue;
-        const base = i * components.length;
-        flat[base] = point.x;
-        flat[base + 1] = point.y;
-        flat[base + 2] = point.z;
-        if (this.options.includeVisibility) {
-          flat[base + 3] = point.visibility ?? 0;
-        }
-      }
-
       this.update(
         {
           modality: Modality.VIDEO,
           processingStage: ProcessingStage.INFERRED,
           name: this.streamName(pose),
         },
-        flat
+        flattenPoints(points, components)
       );
     }
   }

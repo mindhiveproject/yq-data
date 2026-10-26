@@ -3,9 +3,10 @@ import {
   VisionReceiver,
   VisionAssetOptions,
   FACE_BOX_CHANNELS,
-  pointStreamMetadata,
+  subjectStreamName,
 } from "./base_vision";
 import { FACE_API_68 } from "../../../draw/face_topology";
+import { flattenPoints, pointStreamMetadata } from "../../../points";
 
 /**
  * Where face-api's weight files are fetched from.
@@ -69,6 +70,7 @@ export interface FaceEmotionOptions extends VisionAssetOptions {
 
 /** Number of points in face-api's landmark model. */
 const LANDMARK_POINTS = 68;
+const LANDMARK_COMPONENTS = ["x", "y"];
 
 /**
  * Facial emotion recognition via face-api's expression network.
@@ -201,13 +203,8 @@ export class FaceEmotionReceiver extends VisionReceiver {
     this.busy = false;
   }
 
-  private faceSuffix(face: number): string | undefined {
-    return this.options.numFaces > 1 ? `face_${face + 1}` : undefined;
-  }
-
   private nameFor(base: string, face: number): string {
-    const suffix = this.faceSuffix(face);
-    return suffix ? `${base}_${suffix}` : base;
+    return subjectStreamName(base, "face", face, this.options.numFaces);
   }
 
   private registerStreams(face: number): void {
@@ -255,7 +252,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
         name: this.nameFor("landmarks", face),
         additionalMetadata: {
           samplingRate: this.assets.maxFps,
-          ...pointStreamMetadata(LANDMARK_POINTS, ["x", "y"], FACE_API_68),
+          ...pointStreamMetadata(LANDMARK_POINTS, LANDMARK_COMPONENTS, FACE_API_68),
         },
       });
     }
@@ -349,11 +346,10 @@ export class FaceEmotionReceiver extends VisionReceiver {
         // `positions` is already shifted into whole-frame pixels;
         // `relativePositions` would be relative to the face crop instead.
         const { imageWidth, imageHeight } = detection;
-        const flat = new Float32Array(positions.length * 2);
-        for (let i = 0; i < positions.length; i++) {
-          flat[i * 2] = positions[i].x / imageWidth;
-          flat[i * 2 + 1] = positions[i].y / imageHeight;
-        }
+        const flat = flattenPoints(positions, LANDMARK_COMPONENTS, {
+          width: imageWidth,
+          height: imageHeight,
+        });
         this.update(
           {
             modality: Modality.VIDEO,

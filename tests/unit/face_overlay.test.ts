@@ -20,7 +20,10 @@ import {
   MEDIAPIPE_FACE_478,
   MEDIAPIPE_FACE_CONTOURS,
   MEDIAPIPE_FACE_MESH,
+  MEDIAPIPE_POSE_33,
+  MEDIAPIPE_POSE_CONNECTIONS,
   encodeStreamMeta,
+  pointStreamMetadata,
   topologyEdges,
 } from "../../src";
 
@@ -114,6 +117,7 @@ describe("FaceLandmarkReceiver geometry", () => {
     expect(meta.additionalMetadata).toEqual({
       pointComponents: ["x", "y", "z"],
       topology: MEDIAPIPE_FACE_478,
+      coordinateSpace: "image",
     });
     // What every network consumer is re-sent each few seconds.
     expect(JSON.stringify(meta).length).toBeLessThan(1000);
@@ -247,6 +251,7 @@ describe("face topology", () => {
   it("indexes only points the models produce", () => {
     expect(Math.max(...MEDIAPIPE_FACE_CONTOURS, ...MEDIAPIPE_FACE_MESH)).toBe(477);
     expect(Math.max(...FACE_API_68_OUTLINE)).toBe(67);
+    expect(Math.max(...MEDIAPIPE_POSE_CONNECTIONS)).toBe(32);
     expect(MEDIAPIPE_FACE_MESH).toHaveLength(2556 * 2);
   });
 
@@ -254,6 +259,7 @@ describe("face topology", () => {
     expect(topologyEdges(MEDIAPIPE_FACE_478)).toBe(MEDIAPIPE_FACE_CONTOURS);
     expect(topologyEdges(MEDIAPIPE_FACE_478, "mesh")).toBe(MEDIAPIPE_FACE_MESH);
     expect(topologyEdges(FACE_API_68, "mesh")).toBe(FACE_API_68_OUTLINE);
+    expect(topologyEdges(MEDIAPIPE_POSE_33, "mesh")).toBe(MEDIAPIPE_POSE_CONNECTIONS);
     expect(topologyEdges("something-else")).toBeUndefined();
   });
 });
@@ -354,6 +360,30 @@ describe("FaceOverlay", () => {
     const moves = calls.filter(([name]) => name === "moveTo").length;
     expect(moves).toBe(FACE_API_68_OUTLINE.length / 2);
     expect(calls.filter(([name]) => name === "stroke")).toHaveLength(1);
+  });
+
+  it("draws pose landmarks as a skeleton, and not metric world coordinates", () => {
+    const streamID = "pose:video:inferred:landmarks";
+    const meta = (coordinateSpace: "image" | "world") => ({
+      streamID,
+      modality: "video" as any,
+      ...pointStreamMetadata(33, ["x", "y", "z"], MEDIAPIPE_POSE_33, coordinateSpace),
+    });
+    const send = (coordinateSpace: "image" | "world") => {
+      const { canvas, calls } = fakeCanvas();
+      const overlay = new FaceOverlay(canvas, { layers: { landmarks: false } });
+      overlay.push({
+        streamID,
+        timestamp: 0,
+        data: new Float32Array(99).fill(0.5),
+        metadata: meta(coordinateSpace) as any,
+      });
+      overlay.draw();
+      return calls.filter(([name]) => name === "moveTo").length;
+    };
+
+    expect(send("image")).toBe(MEDIAPIPE_POSE_CONNECTIONS.length / 2);
+    expect(send("world")).toBe(0);
   });
 
   it("stops drawing a face once its stream goes quiet", () => {

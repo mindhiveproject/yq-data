@@ -22,5 +22,8 @@ export * from "./transport";
 // Outbound streaming (the counterpart to Recorder)
 export * from "./transmit";
 
+// Point streams: landmarks and pose, described and measured the same way
+export * from "./points";
+
 // Drawing streams onto a canvas, e.g. face geometry over the video
 export * from "./draw";

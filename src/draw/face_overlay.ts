@@ -2,7 +2,8 @@ import { Subscription } from "rxjs";
 import { DataPacket } from "../data_stream.interface";
 import { BaseReceiver } from "../receiver/base_receiver";
 import { AUTO_STALE_INTERVALS } from "../manager/manager";
-import { FaceTopologyDetail, topologyEdges } from "./face_topology";
+import { pointBounds, pointStride } from "../points";
+import { TopologyDetail, topologyEdges } from "./topology";
 
 /**
  * How the video frame is fitted into the element the overlay covers — the
@@ -42,7 +43,7 @@ export interface FaceOverlayOptions {
      * the full 2556-edge triangulation, which is far heavier to stroke.
      * Streams whose topology is unknown draw as points only.
      */
-    connections?: FaceTopologyDetail | false;
+    connections?: TopologyDetail | false;
     /** `head_pose`, as axes at the face's centre. */
     headPose?: boolean;
     /** The strongest `expressions` score, above the box. */
@@ -172,15 +173,14 @@ export function faceStreamKey(
 }
 
 /**
- * Components per point in a landmark stream: from `pointComponents` when the
- * source declared it, else from channel labels like pose's "nose x", else 3.
+ * The landmark packet to draw over the video, or undefined for one that
+ * cannot be: metric `world` coordinates are not positions in the frame.
  */
-function pointStride(packet: DataPacket): number {
-  const components = packet.metadata.additionalMetadata?.pointComponents;
-  if (Array.isArray(components) && components.length > 0) return components.length;
-  const info = packet.metadata.channelInfo;
-  const second = info?.findIndex((c, i) => i > 0 && c.label.endsWith(" x"));
-  return second !== undefined && second > 0 ? second : 3;
+function framePoints(packet: DataPacket | undefined): DataPacket | undefined {
+  if (!packet) return undefined;
+  return packet.metadata.additionalMetadata?.coordinateSpace === "world"
+    ? undefined
+    : packet;
 }
 
 /**
@@ -327,7 +327,7 @@ export class FaceOverlay {
     const show = {
       box: true,
       landmarks: true,
-      connections: "contours" as FaceTopologyDetail | false,
+      connections: "contours" as TopologyDetail | false,
       headPose: true,
       label: true,
       ...this.options.layers,
@@ -348,9 +348,9 @@ export class FaceOverlay {
     ctx.lineWidth = style.lineWidth;
     ctx.font = style.font;
 
-    const points = layers.get("landmarks")?.packet;
+    const points = framePoints(layers.get("landmarks")?.packet);
     if (show.landmarks && points) {
-      const stride = pointStride(points);
+      const stride = pointStride(points.metadata);
       const size = style.pointSize;
       for (let i = 0; i + 1 < points.data.length; i += stride) {
         ctx.fillRect(toX(points.data[i]) - size / 2, toY(points.data[i + 1]) - size / 2, size, size);
@@ -364,7 +364,7 @@ export class FaceOverlay {
     if (edges && points) {
       // One path for every edge: a stroke per edge is what makes the full
       // mesh expensive, not the edges themselves.
-      const stride = pointStride(points);
+      const stride = pointStride(points.metadata);
       const data = points.data;
       ctx.beginPath();
       for (let e = 0; e + 1 < edges.length; e += 2) {
@@ -389,17 +389,16 @@ export class FaceOverlay {
       box = { left: Math.min(...xs), top: toY(y), width: Math.abs(xs[1] - xs[0]), height: h * t.scaleY };
       if (show.box) ctx.strokeRect(box.left, box.top, box.width, box.height);
     } else if (points) {
-      const stride = pointStride(points);
-      let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
-      for (let i = 0; i + 1 < points.data.length; i += stride) {
-        const px = toX(points.data[i]);
-        const py = toY(points.data[i + 1]);
-        minX = Math.min(minX, px);
-        maxX = Math.max(maxX, px);
-        minY = Math.min(minY, py);
-        maxY = Math.max(maxY, py);
+      const bounds = pointBounds(points.data, pointStride(points.metadata));
+      if (bounds) {
+        const xs = [toX(bounds.x), toX(bounds.x + bounds.width)];
+        box = {
+          left: Math.min(...xs),
+          top: toY(bounds.y),
+          width: Math.abs(xs[1] - xs[0]),
+          height: bounds.height * t.scaleY,
+        };
       }
-      if (minX <= maxX) box = { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
     }
 
     const expressions = layers.get("expressions")?.packet;

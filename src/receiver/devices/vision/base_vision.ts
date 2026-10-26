@@ -1,8 +1,4 @@
-import {
-  ChannelInfo,
-  Modality,
-  StreamMetadata,
-} from "../../../data_stream.interface";
+import { ChannelInfo, Modality } from "../../../data_stream.interface";
 import { BaseReceiver } from "../../base_receiver";
 
 /** Where the MediaPipe wasm runtime and model files are fetched from. */
@@ -54,24 +50,18 @@ export const FACE_BOX_CHANNELS: ChannelInfo[] = [
 ];
 
 /**
- * Layout of a stream of `count` points flattened to `components` each, as in
- * `[x0, y0, z0, x1, …]`.
- *
- * Deliberately not one `channelInfo` entry per value: for the 478-point face
- * mesh that is 43 KB of labels, re-announced to every network consumer every
- * few seconds. `pointComponents` gives the stride in a few bytes, and
- * `topology` names the model the points come from so a drawing side can look
- * up how they connect (see `topologyEdges`).
+ * Name of a per-subject stream: `base` alone when one subject is tracked, else
+ * `base_<subject>_<n>` counting from 1 — `landmarks`, or `landmarks_face_2`.
+ * `FaceOverlay` reads the `face` form back, so a new kind of subject is named
+ * here rather than by hand in each receiver.
  */
-export function pointStreamMetadata(
-  count: number,
-  components: string[],
-  topology: string
-): Partial<StreamMetadata> {
-  return {
-    channelCount: count * components.length,
-    additionalMetadata: { pointComponents: components, topology },
-  };
+export function subjectStreamName(
+  base: string,
+  subject: "face" | "pose",
+  index: number,
+  total: number
+): string {
+  return total > 1 ? `${base}_${subject}_${index + 1}` : base;
 }
 
 /**

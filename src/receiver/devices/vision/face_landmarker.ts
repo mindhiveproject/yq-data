@@ -5,9 +5,14 @@ import {
   DEFAULT_WASM_PATH,
   FACE_BOX_CHANNELS,
   FaceFrame,
-  pointStreamMetadata,
+  subjectStreamName,
 } from "./base_vision";
 import { MEDIAPIPE_FACE_478 } from "../../../draw/face_topology";
+import {
+  flattenPoints,
+  pointBounds,
+  pointStreamMetadata,
+} from "../../../points";
 
 const DEFAULT_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
@@ -51,6 +56,8 @@ export interface FaceLandmarkOptions extends VisionAssetOptions {
 
 /** Number of points in a Face Landmarker mesh. */
 const FACE_MESH_POINTS = 478;
+
+const FACE_POINT_COMPONENTS = ["x", "y", "z"];
 
 /**
  * Facial expression tracking via MediaPipe Face Landmarker.
@@ -146,13 +153,12 @@ export class FaceLandmarkReceiver extends VisionReceiver {
     };
   }
 
-  private faceSuffix(face: number): string | undefined {
-    return this.options.numFaces > 1 ? `face_${face + 1}` : undefined;
+  private nameFor(base: string, face: number): string {
+    return subjectStreamName(base, "face", face, this.options.numFaces);
   }
 
   private registerStreams(face: number): void {
-    const suffix = this.faceSuffix(face);
-    const nameFor = (base: string) => (suffix ? `${base}_${suffix}` : base);
+    const nameFor = (base: string) => this.nameFor(base, face);
 
     this.ensureStream({
       modality: Modality.VIDEO,
@@ -201,7 +207,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
           samplingRate: this.assets.maxFps,
           ...pointStreamMetadata(
             FACE_MESH_POINTS,
-            ["x", "y", "z"],
+            FACE_POINT_COMPONENTS,
             MEDIAPIPE_FACE_478
           ),
         },
@@ -222,8 +228,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
       const categories = blendshapeSets[face]?.categories ?? [];
       if (categories.length === 0) continue;
 
-      const suffix = this.faceSuffix(face);
-      const nameFor = (base: string) => (suffix ? `${base}_${suffix}` : base);
+      const nameFor = (base: string) => this.nameFor(base, face);
 
       this.update(
         {
@@ -250,25 +255,24 @@ export class FaceLandmarkReceiver extends VisionReceiver {
 
       const points = results?.faceLandmarks?.[face];
 
-      if (this.options.emitFaceBox && points?.length) {
-        this.update(
-          {
-            modality: Modality.VIDEO,
-            processingStage: ProcessingStage.INFERRED,
-            name: nameFor("face_box"),
-          },
-          boxAround(points)
-        );
-      }
+      if (points?.length && (this.options.emitFaceBox || this.options.emitLandmarks)) {
+        const flat = flattenPoints(points, FACE_POINT_COMPONENTS);
 
-      if (this.options.emitLandmarks) {
-        if (points) {
-          const flat = new Float32Array(points.length * 3);
-          for (let i = 0; i < points.length; i++) {
-            flat[i * 3] = points[i].x;
-            flat[i * 3 + 1] = points[i].y;
-            flat[i * 3 + 2] = points[i].z;
+        if (this.options.emitFaceBox) {
+          const box = pointBounds(flat, FACE_POINT_COMPONENTS.length);
+          if (box) {
+            this.update(
+              {
+                modality: Modality.VIDEO,
+                processingStage: ProcessingStage.INFERRED,
+                name: nameFor("face_box"),
+              },
+              [box.x, box.y, box.width, box.height]
+            );
           }
+        }
+
+        if (this.options.emitLandmarks) {
           this.update(
             {
               modality: Modality.VIDEO,
@@ -296,21 +300,6 @@ export class FaceLandmarkReceiver extends VisionReceiver {
       }
     }
   }
-}
-
-/** Tightest box around normalized points, as [x, y, width, height]. */
-function boxAround(points: { x: number; y: number }[]): number[] {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const { x, y } of points) {
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-  }
-  return [minX, minY, maxX - minX, maxY - minY];
 }
 
 /**

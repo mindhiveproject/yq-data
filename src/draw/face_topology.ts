@@ -398,24 +398,3 @@ export const FACE_API_68_OUTLINE: readonly number[] = FACE_API_68_RUNS.flatMap(
     return edges;
   }
 );
-
-/** How much of a topology to draw. */
-export type FaceTopologyDetail = "contours" | "mesh";
-
-/**
- * Edges for a named topology, or undefined for one this package does not know
- * — a stream from some other source, which then draws as points only.
- */
-export function topologyEdges(
-  topology: string | undefined,
-  detail: FaceTopologyDetail = "contours"
-): readonly number[] | undefined {
-  switch (topology) {
-    case MEDIAPIPE_FACE_478:
-      return detail === "mesh" ? MEDIAPIPE_FACE_MESH : MEDIAPIPE_FACE_CONTOURS;
-    case FACE_API_68:
-      return FACE_API_68_OUTLINE;
-    default:
-      return undefined;
-  }
-}

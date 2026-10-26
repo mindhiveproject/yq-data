@@ -255,6 +255,17 @@ the overlay applies the video's `object-fit`. Pass `mirror: true` for a video
 flipped with CSS, rather than flipping the canvas too, which would mirror the
 label text.
 
+`PoseReceiver`'s `landmarks` stream is a point stream of the same kind, so the
+overlay joins it into MediaPipe's skeleton. Streams in `worldCoordinates` are
+metric rather than positions in the frame, declare `coordinateSpace: "world"`,
+and are not drawn.
+
+Face and body landmarks are described and read by the same helpers:
+`pointStreamMetadata` (stride, `topology`, `coordinateSpace`), `pointChannelGroups`
+(a name and packet indices per point, e.g. `"left wrist"`), `pointStride`,
+`pointBounds`, and `topologyEdges` / `topologyPointNames` for what the model
+fixes. Multi-subject streams are named `landmarks_face_2` / `landmarks_pose_2`.
+
 A receiver publishes nothing for a frame with no face. That silence is how a
 face leaving the frame reaches the canvas: it is cleared once its streams have
 been quiet for `staleAfter` (by default four of the stream's own packet
