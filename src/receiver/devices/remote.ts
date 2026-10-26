@@ -11,7 +11,6 @@ import {
   Protocol,
   StreamIdentity,
   identityFromStreamID,
-  protocolFromFunctions,
 } from "../../transport/protocol";
 import { streamProtocol } from "../../transport/stream_protocol";
 import { Subscription } from "rxjs";
@@ -29,23 +28,20 @@ export interface RemoteStreamOptions {
    */
   protocol?: Protocol;
   /**
-   * @deprecated Pass a `protocol`. Turns a transport value into decoded stream
-   * updates.
-   */
-  decode?: (value: unknown) => Decoded[];
-  /**
    * Treat an incoming packet's `timestamp` as this machine's clock.
    *
    * Defaults to the transport's `structuredClone` flag — `true` for
    * `postMessage` / `BroadcastChannel` / memory (same machine), `false` for
    * `websocket`, where the original `timestamp` is filed under `deviceTime`
-   * and ingest time is stamped instead.
+   * and ingest time is stamped instead. With a transport factory there is no
+   * transport to ask yet, so it defaults to `false`.
    */
   trustRemoteClock?: boolean;
   /**
    * Close the transport when {@link RemoteStreamReceiver.disconnect} is called.
    * Default `true`. Set `false` when the transport is shared with a
-   * `StreamTransmitter` in the same context.
+   * `StreamTransmitter` in the same context. (A transport made by a factory is
+   * the receiver's own and is always closed.)
    */
   closeTransportOnDisconnect?: boolean;
 }
@@ -74,13 +70,19 @@ interface RemoteStream {
  * `connect()` opens the transport and begins registering streams;
  * `startStream()` / `stopStream()` gate the sample packets, so a graph can be
  * validated against the announced streams before any data is let through.
+ *
+ * Give it a **factory** instead of a transport when the address is not known
+ * until `connect()`, or when the receiver should be able to connect again after
+ * a `disconnect()`: each `connect()` calls the factory for a fresh transport,
+ * and a failed connect closes it again. `LSLReceiver` is built this way.
  */
 export class RemoteStreamReceiver extends BaseReceiver {
   deviceName = "Remote";
   modalities: Modality[] = [Modality.UNKNOWN];
   deviceID: string | number;
 
-  protected readonly transport: Transport;
+  private readonly makeTransport?: () => Transport;
+  private current?: Transport;
   /** The protocol given at construction, if any. Unset means the transport's own. */
   readonly protocol?: Protocol;
   private readonly trustRemoteClock: boolean;
@@ -91,19 +93,33 @@ export class RemoteStreamReceiver extends BaseReceiver {
   private openSub?: Subscription;
   private streaming = false;
 
-  constructor(transport: Transport, options: RemoteStreamOptions = {}) {
+  constructor(
+    transport: Transport | (() => Transport),
+    options: RemoteStreamOptions = {}
+  ) {
     super();
-    this.transport = transport;
+    if (typeof transport === "function") {
+      this.makeTransport = transport;
+    } else {
+      this.current = transport;
+    }
     this.deviceID = options.deviceID ?? "remote";
-    this.protocol =
-      options.protocol ??
-      (options.decode
-        ? protocolFromFunctions("custom", { decode: options.decode }, streamProtocol)
-        : undefined);
+    this.protocol = options.protocol;
     this.trustRemoteClock =
-      options.trustRemoteClock ?? transport.structuredClone;
+      options.trustRemoteClock ?? this.current?.structuredClone ?? false;
     this.closeTransportOnDisconnect =
       options.closeTransportOnDisconnect ?? true;
+  }
+
+  /**
+   * The transport in use. With a factory it does not exist until `connect()`
+   * has called it.
+   */
+  protected get transport(): Transport {
+    if (!this.current) {
+      throw new Error("This receiver has no transport until connect() creates one.");
+    }
+    return this.current;
   }
 
   /** Incoming stream IDs registered so far. */
@@ -114,7 +130,15 @@ export class RemoteStreamReceiver extends BaseReceiver {
   public async connect(): Promise<void> {
     if (this.isConnected) return;
 
-    await this.transport.ready();
+    if (this.makeTransport) this.current = this.makeTransport();
+    try {
+      await this.transport.ready();
+    } catch (error) {
+      // A transport the receiver made is the receiver's to clean up; one that
+      // was handed in belongs to the caller.
+      if (this.makeTransport) this.transport.close();
+      throw error;
+    }
 
     this.messageUnsub = this.transport.onMessage((value) => this.ingest(value));
     this.openSub = this.transport.isOpen$.subscribe((open) => {
@@ -140,7 +164,9 @@ export class RemoteStreamReceiver extends BaseReceiver {
     this.messageUnsub = undefined;
     this.openSub?.unsubscribe();
     this.openSub = undefined;
-    if (this.closeTransportOnDisconnect) this.transport.close();
+    if (this.current && (this.closeTransportOnDisconnect || this.makeTransport)) {
+      this.current.close();
+    }
     this.isConnected = false;
   }
 
@@ -148,7 +174,7 @@ export class RemoteStreamReceiver extends BaseReceiver {
     let updates: Decoded[];
     try {
       const protocol = this.protocol ?? this.transport.protocol ?? streamProtocol;
-      updates = protocol.decode(value);
+      updates = protocol.decode(value, { streaming: this.streaming });
     } catch {
       console.warn("RemoteStreamReceiver: dropping an undecodable message.");
       return;

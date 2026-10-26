@@ -99,7 +99,7 @@ A receiver owns a connection to one source and publishes packets.
 |---|---|---|
 | `MuseReceiver` | Muse headband | Web Bluetooth. Raw EEG at 256 Hz, PPG at 64 Hz |
 | `EMOTIVReceiver` | EMOTIV headsets | Cortex API over WebSocket; needs credentials |
-| `LSLReceiver` | Lab Streaming Layer | Via a [WebSocket relay](#lab-streaming-layer); auto-reconnects |
+| `LSLReceiver` | Lab Streaming Layer | Via a [WebSocket relay](#lab-streaming-layer); reads the `lsl` protocol; auto-reconnects |
 | `ArduinoReceiver` | Arduino, ESP32, other [microcontrollers](#microcontrollers) | Web Serial. The board announces its own streams; also writes to the board |
 | `MicrophoneReceiver` | Microphone | AudioWorklet; raw interleaved PCM |
 | `VideoReceiver` | Camera | Lifecycle handle only — emits no packets |
@@ -275,6 +275,18 @@ await lsl.connect("ws://localhost:8080");
 Python script that does this. Any relay emitting the same message shape works
 — `{ "<streamKey>": { info, timeseries, timestamp } }`, `info` on the first
 message for a stream — so an existing bridge can be pointed at this instead.
+
+What the relay says is read by the `lsl` [protocol](#protocols) (`LSLProtocol`),
+which `LSLReceiver` speaks over a `WebSocketTransport`. Because it is a protocol
+rather than a socket, it works anywhere a transport does — including as a
+pipeline source whose graph stays plain JSON:
+
+```ts
+transport.protocol = new LSLProtocol();
+// { id: "eeg", receive: { transport: "relay" }, stream: "eeg" }
+```
+
+It is decode-only: yq-data sends nothing back to LSL.
 
 One relay commonly carries several devices; each LSL stream becomes its own
 yq-data stream, keyed by `source_id`. Use `StreamSelection` to pull individual
@@ -821,7 +833,7 @@ A `Transport` is a bidirectional channel for values — `send`, `onMessage`,
 | `MemoryTransport` | In-process | `MemoryTransport.pair()` — tests, and wiring a pipeline output back to a source in the same page |
 | `PostMessageTransport` | A worker or iframe | Structured clone; a `DataPacket` crosses with its `Float32Array` intact |
 | `BroadcastChannelTransport` | Same-origin contexts | Structured clone; one producer fans out to every tab on the channel name |
-| `WebSocketTransport` | A server or another machine | Encodes values through a `WireCodec`; owns reconnection, same backoff as `LSLReceiver` |
+| `WebSocketTransport` | A server or another machine | Encodes values through a `WireCodec`; owns reconnection, which `LSLReceiver` uses |
 | `SerialTransport` | A microcontroller on a serial port | Web Serial. A byte stream, so it frames (COBS and a CRC-16) and encodes MessagePack; no auto-reconnect, since reopening resets the board. See [microcontrollers](#microcontrollers) |
 
 Structured-clone transports need **no codec** — the packet is the message.
@@ -839,7 +851,7 @@ named on its own axis, so the names never compete:
 |---|---|---|
 | Transport | the mechanism | `WebSocketTransport`, `SerialTransport`, `PostMessageTransport` |
 | Codec | the format | `jsonCodec`, `msgpackCodec` |
-| Protocol | who is on the other end | `yq-stream` (another yq-data peer), `yq-arduino` (a board) |
+| Protocol | who is on the other end | `yq-stream` (another yq-data peer), `yq-arduino` (a board), `lsl` (an LSL relay) |
 
 Any protocol runs over any transport that suits it — yq-stream over a WebSocket
 or a serial cable, yq-arduino over serial, Bluetooth or an ESP32's Wi-Fi. A
@@ -848,6 +860,15 @@ transport records the protocol spoken on it as `transport.protocol`;
 `protocol` of their own, and default to yq-stream on a link nothing has claimed.
 Versions travel as integers (`v`) and are never part of a protocol's name.
 
+A protocol is one object — `name`, `version`, `decode(value)` returning stream
+updates, `encodePacket(packet)` returning the messages that carry it (empty to
+send nothing), and optionally `encodeMeta(metadata)`. A protocol with no
+`encodeMeta` has no metadata message, and a transmitter speaking it never
+announces. Two of the three are translation layers onto this package's own
+streams: `lsl` is decode-only, and `yq-arduino` quantises on the way out.
+Coming from the first networking release? See
+[docs/migration.md](docs/migration.md).
+
 ### The stream protocol
 
 yq-stream is what two yq-data peers say to each other. Over a JSON WebSocket it
@@ -855,37 +876,28 @@ is plain JSON, so a producer or consumer in another language needs no library:
 
 ```jsonc
 // announces a stream; sent before its first packet, on change, and on a timer
-{ "protocol": "yq-data/1", "type": "meta", "streamID": "muse-1:eeg:raw",
+{ "protocol": "yq-stream", "v": 1, "type": "meta", "streamID": "muse-1:eeg:raw",
   "metadata": { /* full StreamMetadata */ } }
 
 // one chunk of interleaved samples
-{ "protocol": "yq-data/1", "type": "packet", "streamID": "muse-1:eeg:raw",
+{ "protocol": "yq-stream", "v": 1, "type": "packet", "streamID": "muse-1:eeg:raw",
   "timestamp": 1724716800000, "channelCount": 4, "data": [/* interleaved */],
   "labels": ["go"] }
 ```
 
-**The tag.** The protocol first shipped with the tag `"yq-data/1"` — name and
-version in one string — and other platforms speak it, so that is still what
-this package writes. Its name is now yq-stream, and a message may equally be
-tagged `{ "protocol": "yq-stream", "v": 1 }`; both are read, and the fields are
-identical. To write the new tag, pass
-`createStreamProtocol({ emit: "current" })` as the `protocol` of a transmitter.
-The default will move once the other platforms accept it. A message of a
-different `v` is ignored rather than misread.
+A message of a different `v` is ignored rather than misread — and so is one
+tagged `"yq-data/1"`, the name this protocol first shipped under.
 
 A consumer that only ever sees `packet` messages still reconstructs a usable
 stream: the packet names its own `streamID` and `channelCount`, and a
 well-formed `deviceID:modality:stage[:name]` ID carries the modality. A later
 `meta` upgrades that.
 
-To consume some other protocol, give `RemoteStreamReceiver` a `protocol` — an
-object with `name`, `version`, `decode(value)` returning stream updates, and
-`encodePacket(packet)` returning messages (empty to send nothing). The older
-`decode`, `encodePacket` and `encodeMeta` options still work; the exports the
-protocol had before the rename (`packetToWire`, `wireDecoder`, …) remain as
-deprecated aliases. That is all
-`LSLReceiver` effectively is over `WebSocketTransport`, and all
-`ArduinoReceiver` is, plus a handshake.
+To speak some other protocol, give `RemoteStreamReceiver` or `StreamTransmitter`
+a `protocol`, or set `transport.protocol` once for the whole link. `LSLReceiver`
+is a `RemoteStreamReceiver` reading the `lsl` protocol over a
+`WebSocketTransport`, and `ArduinoReceiver` is one reading `yq-arduino`, plus a
+handshake.
 
 ## Working with the DSP directly
 

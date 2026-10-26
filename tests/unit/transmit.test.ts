@@ -14,11 +14,6 @@ import {
   Modality,
   Pipeline,
   RemoteStreamReceiver,
-  WIRE_PROTOCOL,
-  isWireMessage,
-  metaToWire,
-  packetToWire,
-  wireDecoder,
   StreamMetadata,
   StreamTransmitter,
   canConnect,
@@ -29,7 +24,6 @@ import {
 import {
   BaseTransport,
   Protocol,
-  createStreamProtocol,
   streamProtocol,
 } from "../../src";
 
@@ -110,7 +104,8 @@ describe("numeric streams", () => {
 
     // A bare packet message, as a terse third-party producer might send.
     a.send({
-      protocol: "yq-data/1",
+      protocol: "yq-stream",
+      v: 1,
       type: "packet",
       streamID: "sensor-9:eeg:raw",
       timestamp: 1,
@@ -177,22 +172,21 @@ describe("pipeline outputs", () => {
   it("transmits a node's output the same way Recorder records one", async () => {
     const { tx, seen } = await wired();
 
-    const lsl = new LSLReceiver();
-    (lsl as any).isConnected = true;
+    const [relay, link] = MemoryTransport.pair();
+    const lsl = new LSLReceiver({ transport: () => link });
+    await lsl.connect("memory://relay");
     lsl.startStream();
-    (lsl as any).handleMessage({
-      data: JSON.stringify({
-        eeg: {
-          info: {
-            name: "BioSemi",
-            type: "EEG",
-            channel_count: 2,
-            channel_format: 1,
-            nominal_srate: 256,
-            source_id: "biosemi-1",
-          },
+    relay.send({
+      eeg: {
+        info: {
+          name: "BioSemi",
+          type: "EEG",
+          channel_count: 2,
+          channel_format: 1,
+          nominal_srate: 256,
+          source_id: "biosemi-1",
         },
-      }),
+      },
     });
 
     const pipeline = new Pipeline({
@@ -212,9 +206,7 @@ describe("pipeline outputs", () => {
     tx.addSource(pipeline.getOutput("sel"));
     tx.start();
 
-    (lsl as any).handleMessage({
-      data: JSON.stringify({ eeg: { timeseries: [1, 2, 3, 4], timestamp: 5 } }),
-    });
+    relay.send({ eeg: { timeseries: [1, 2, 3, 4], timestamp: 5 } });
 
     expect(seen).toHaveLength(1);
     expect(seen[0].streamID).toBe("biosemi-1:eeg:raw:BioSemi");
@@ -329,29 +321,15 @@ describe("the protocol spoken on a link", () => {
     return source;
   }
 
-  it("is yq-stream on a link nothing has claimed, under the tag it shipped with", () => {
+  it("is yq-stream on a link nothing has claimed", () => {
     const transport = new RecordingTransport();
     transmit(transport).next(eegPacket());
-
-    expect(transport.sent.map((m) => (m as any).protocol)).toEqual([
-      "yq-data/1",
-      "yq-data/1",
-    ]);
-    expect(transport.sent.map((m) => (m as any).type)).toEqual(["meta", "packet"]);
-    // The tag already says the version; the old messages carried no `v`.
-    expect(transport.sent.some((m) => "v" in (m as object))).toBe(false);
-  });
-
-  it("writes the current tag when asked", () => {
-    const transport = new RecordingTransport();
-    transmit(transport, { protocol: createStreamProtocol({ emit: "current" }) }).next(
-      eegPacket()
-    );
 
     expect(transport.sent.map((m) => [(m as any).protocol, (m as any).v])).toEqual([
       ["yq-stream", 1],
       ["yq-stream", 1],
     ]);
+    expect(transport.sent.map((m) => (m as any).type)).toEqual(["meta", "packet"]);
   });
 
   it("is the transport's own once something has claimed it", () => {
@@ -407,9 +385,10 @@ describe("the protocol spoken on a link", () => {
   });
 });
 
-describe("compatibility with yq-data/1", () => {
+describe("the old yq-data/1 tag", () => {
+  // Removed on purpose: see docs/migration.md. These pin that it is refused
+  // quietly, so a producer that has not migrated is easy to diagnose.
   const packet = {
-    protocol: "yq-data/1",
     type: "packet",
     streamID: "sensor-9:eeg:raw",
     timestamp: 1,
@@ -428,76 +407,16 @@ describe("compatibility with yq-data/1", () => {
     return seen;
   }
 
-  it("reads a message tagged yq-data/1, with no v", async () => {
-    expect(await receive(packet)).toHaveLength(1);
-  });
-
-  it("reads the same message tagged yq-stream with v 1", async () => {
+  it("reads yq-stream with v 1", async () => {
     expect(await receive({ ...packet, protocol: "yq-stream", v: 1 })).toHaveLength(1);
   });
 
-  it("ignores yq-stream from another version rather than misreading it", async () => {
+  it("ignores yq-data/1", async () => {
+    expect(await receive({ ...packet, protocol: "yq-data/1" })).toHaveLength(0);
+  });
+
+  it("ignores yq-stream from another version, or with none", async () => {
     expect(await receive({ ...packet, protocol: "yq-stream", v: 2 })).toHaveLength(0);
     expect(await receive({ ...packet, protocol: "yq-stream" })).toHaveLength(0);
-  });
-
-  it("sends byte-for-byte what the first release sent", () => {
-    // Expected strings produced by running 47833f4's wire.ts (HEAD at the time
-    // the protocol was renamed), not written by hand.
-    const metadata: StreamMetadata = {
-      streamID: "muse-1:eeg:raw",
-      modality: Modality.EEG,
-      channelCount: 2,
-    };
-    const packet: DataPacket = {
-      streamID: "muse-1:eeg:raw",
-      timestamp: 1724716800000,
-      deviceTime: 5,
-      data: Float32Array.from([1, 2, 3, 4]),
-      metadata,
-    };
-
-    expect(JSON.stringify(streamProtocol.encodePacket(packet)[0])).toBe(
-      '{"protocol":"yq-data/1","type":"packet","streamID":"muse-1:eeg:raw",' +
-        '"timestamp":1724716800000,"channelCount":2,"data":[1,2,3,4],"deviceTime":5}'
-    );
-    expect(JSON.stringify(streamProtocol.encodeMeta!(metadata))).toBe(
-      '{"protocol":"yq-data/1","type":"meta","streamID":"muse-1:eeg:raw",' +
-        '"metadata":{"streamID":"muse-1:eeg:raw","modality":"eeg","channelCount":2}}'
-    );
-  });
-
-  it("still exports the names it had", () => {
-    expect(WIRE_PROTOCOL).toBe("yq-data/1");
-    expect(isWireMessage(packet)).toBe(true);
-    expect(wireDecoder()(packet)).toHaveLength(1);
-    expect(metaToWire({ streamID: "a:eeg:raw", modality: Modality.EEG }).type).toBe("meta");
-  });
-
-  it("still honours decode on a receiver", async () => {
-    const [a, b] = MemoryTransport.pair();
-    const decode = jest.fn(() => []);
-    const rx = new RemoteStreamReceiver(b, { decode });
-    await rx.connect();
-    a.send("anything");
-    expect(decode).toHaveBeenCalledWith("anything");
-  });
-
-  it("still honours encodePacket and encodeMeta on a transmitter", () => {
-    const [a, b] = MemoryTransport.pair();
-    const got: unknown[] = [];
-    b.onMessage((m) => got.push(m));
-    const source = new Subject<DataPacket>();
-    const tx = new StreamTransmitter(a, {
-      encodePacket: (p) => (p.streamID.endsWith("skip") ? undefined : { custom: p.streamID }),
-      encodeMeta: () => ({ meta: true }),
-    });
-    tx.addSource(source);
-    tx.start();
-
-    source.next(eegPacket());
-    source.next({ ...eegPacket(), streamID: "x:eeg:raw:skip" });
-
-    expect(got).toEqual([{ meta: true }, { custom: "muse-1:eeg:raw" }]);
   });
 });

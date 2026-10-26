@@ -67,7 +67,7 @@ describe("MemoryTransport", () => {
 
 describe("jsonCodec", () => {
   it("round-trips a wire message", () => {
-    const message = { protocol: "yq-data/1", type: "packet", data: [1, 2, 3] };
+    const message = { protocol: "yq-stream", v: 1, type: "packet", data: [1, 2, 3] };
     expect(jsonCodec.decode(jsonCodec.encode(message))).toEqual(message);
   });
 

@@ -1,7 +1,7 @@
 import { DataPacket, StreamMetadata } from "../data_stream.interface";
 import { BaseReceiver } from "../receiver/base_receiver";
 import { Transport } from "../transport/transport";
-import { Protocol, protocolFromFunctions } from "../transport/protocol";
+import { Protocol } from "../transport/protocol";
 import { streamProtocol } from "../transport/stream_protocol";
 import { Observable, Subscription } from "rxjs";
 
@@ -13,13 +13,6 @@ export interface StreamTransmitterOptions {
    * the transmitter was built is still spoken to correctly.
    */
   protocol?: Protocol;
-  /**
-   * @deprecated Pass a `protocol`. Turns a packet into a message; returning
-   * `undefined` skips the packet. Defaults to the protocol's own.
-   */
-  encodePacket?: (packet: DataPacket) => unknown;
-  /** @deprecated Pass a `protocol`. Turns metadata into a message. */
-  encodeMeta?: (metadata: StreamMetadata) => unknown;
   /**
    * Send a `meta` message before a stream's first packet and whenever its
    * metadata changes. Default `true`. Only a protocol that has such a message
@@ -83,16 +76,7 @@ export class StreamTransmitter {
 
   constructor(transport: Transport, options: StreamTransmitterOptions = {}) {
     this.transport = transport;
-    // The loose functions predate protocol objects; honour them if given.
-    this.protocol =
-      options.protocol ??
-      (options.encodePacket || options.encodeMeta
-        ? protocolFromFunctions(
-            "custom",
-            { encodePacket: options.encodePacket, encodeMeta: options.encodeMeta },
-            streamProtocol
-          )
-        : undefined);
+    this.protocol = options.protocol;
     this.announceMeta = options.announceMeta ?? true;
     this.reannounceInterval = options.reannounceInterval ?? 5000;
   }

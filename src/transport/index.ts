@@ -26,9 +26,10 @@ export type {
 } from "./websocket";
 
 // Protocols: what the messages on a transport mean.
-export { identityFromStreamID, protocolFromFunctions } from "./protocol";
+export { identityFromStreamID } from "./protocol";
 export type {
   Protocol,
+  DecodeContext,
   Decoded,
   DecodedMeta,
   DecodedPacket,
@@ -38,30 +39,21 @@ export type {
 export {
   STREAM_PROTOCOL,
   STREAM_PROTOCOL_VERSION,
-  LEGACY_STREAM_TAG,
   streamProtocol,
-  createStreamProtocol,
   encodeStreamPacket,
   encodeStreamMeta,
   isStreamMessage,
   decodeStreamMessage,
-  // Names from before it was called yq-stream.
-  WIRE_PROTOCOL,
-  packetToWire,
-  metaToWire,
-  isWireMessage,
-  wireDecoder,
 } from "./stream_protocol";
 export type {
   StreamMessage,
   StreamMetaMessage,
   StreamPacketMessage,
-  StreamTag,
-  WireMessage,
-  WireMetaMessage,
-  WirePacketMessage,
-  TransportDecoder,
 } from "./stream_protocol";
+
+// An LSL relay, read as a protocol.
+export { LSL_PROTOCOL, LSL_PROTOCOL_VERSION, LSLProtocol } from "./lsl_protocol";
+export type { LSLStreamInfo } from "./lsl_protocol";
 
 // Boards: yq-arduino over a serial port or BLE UART.
 export {

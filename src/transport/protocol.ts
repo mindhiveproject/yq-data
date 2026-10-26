@@ -9,7 +9,8 @@
  * - A **codec** is how a value becomes bytes, for the transports that need
  *   bytes: `jsonCodec`, `msgpackCodec`. Named by format.
  * - A **protocol** is what the messages say. Named by who is on the other end:
- *   `yq-stream` between two yq-data peers, `yq-arduino` with a board.
+ *   `yq-stream` between two yq-data peers, `yq-arduino` with a board, `lsl`
+ *   with an LSL relay (decode-only, since nothing is sent back).
  *
  * Any protocol can run over any transport that suits it — yq-stream over a
  * WebSocket or a serial cable, yq-arduino over serial, Bluetooth or an ESP32's
@@ -35,8 +36,15 @@ export interface Protocol {
   /** Bumped on a breaking change, and carried on the wire as an integer. */
   readonly version: number;
 
-  /** Turns one incoming transport value into zero or more stream updates. */
-  decode(value: unknown): Decoded[];
+  /**
+   * Turns one incoming transport value into zero or more stream updates.
+   *
+   * A stateful decoder can use `context.streaming` to avoid spending state on
+   * samples the receiver is about to drop — an LSL marker stream assigns a
+   * numeric code the first time it sees a label, and should not do so for a
+   * label nobody receives.
+   */
+  decode(value: unknown, context?: DecodeContext): Decoded[];
 
   /**
    * Turns one packet into the messages that carry it. An empty array skips
@@ -52,8 +60,17 @@ export interface Protocol {
 }
 
 /* -------------------------------------------------------------------------- */
-/* What decoding produces                                                     */
+/* What decoding takes and produces                                           */
 /* -------------------------------------------------------------------------- */
+
+/** What the receiver knows that a decoder might want to. */
+export interface DecodeContext {
+  /**
+   * Whether the receiver will deliver samples. Stream announcements are
+   * always delivered; `startStream()` is what turns samples on.
+   */
+  streaming: boolean;
+}
 
 /** A protocol's account of one stream announcement. */
 export interface DecodedMeta {
@@ -114,34 +131,5 @@ export function identityFromStreamID(
     modality: Modality.UNKNOWN,
     processingStage: ProcessingStage.RAW,
     name: streamID.replace(/:/g, "_"),
-  };
-}
-
-/**
- * A protocol assembled from the loose functions the options used to take
- * (`decode`, `encodePacket`, `encodeMeta`), for code written before protocols
- * were objects. `undefined` from an encoder skips the packet, as it always did.
- */
-export function protocolFromFunctions(
-  name: string,
-  functions: {
-    decode?: (value: unknown) => Decoded[];
-    encodePacket?: (packet: DataPacket) => unknown;
-    encodeMeta?: (metadata: StreamMetadata) => unknown;
-  },
-  base: Protocol
-): Protocol {
-  const { decode, encodePacket, encodeMeta } = functions;
-  return {
-    name,
-    version: base.version,
-    decode: decode ?? base.decode,
-    encodePacket: encodePacket
-      ? (packet) => {
-          const message = encodePacket(packet);
-          return message === undefined ? [] : [message];
-        }
-      : base.encodePacket,
-    encodeMeta: encodeMeta ?? base.encodeMeta,
   };
 }

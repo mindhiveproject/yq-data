@@ -275,10 +275,8 @@ Changes to existing code:
   protocol without `encodeMeta` never announces, which is why a transmit node
   on a board's link sends only `data`.
 - The JSON protocol was renamed from `yq-data/1` to `yq-stream`
-  (`wire.ts` became `stream_protocol.ts`). Compatibility is kept: the old tag is
-  still read **and still written by default**, the new tag (`v` field) is also
-  read, and the old exports and options remain as deprecated aliases. The first
-  release's tests pass unmodified against the new code.
+  (`wire.ts` became `stream_protocol.ts`) and the old names were removed, not
+  aliased; see [migration.md](migration.md).
 - `TransportKind` gains `"serial"` (and `"bluetooth"` with phase 5);
   `structuredClone: false`.
 - `package.json`: `@msgpack/msgpack` as an optional peer dependency.

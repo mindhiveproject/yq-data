@@ -47,9 +47,9 @@ function resolveWebSocket(): WebSocketCtor {
  *
  * The only transport that encodes: every value goes through a {@link WireCodec}
  * (JSON by default), because the far end is a different process and often a
- * different language. It also owns reconnection — same backoff as
- * `LSLReceiver` — so a `StreamTransmitter` or `RemoteStreamReceiver` on top of
- * it does not have to.
+ * different language. It also owns reconnection, with exponential backoff —
+ * `LSLReceiver` reconnects through it — so a `StreamTransmitter` or
+ * `RemoteStreamReceiver` on top of it does not have to.
  *
  * `structuredClone` is `false`: the two ends do not share a clock, which is
  * why `RemoteStreamReceiver` files an incoming `timestamp` under `deviceTime`
