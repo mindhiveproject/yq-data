@@ -402,8 +402,11 @@ void loop() {
 3. **Serial.** ✅ `SerialTransport`, `ArduinoReceiver` with sinks, the
    `Protocol` layer that lets pipelines reach sinks, README section.
    Tests in `tests/unit/arduino.test.ts` run the real transport against a
-   simulated board. **Not done:** a demo page in `demos/`, and any run against
-   real hardware or a real browser's Web Serial.
+   simulated board. The demo page (`demos/`, the Arduino panel) connects a real
+   port or a `SimulatedArduino`, lists the board's streams, shows live values,
+   and builds a slider for each sink from its format. Its port picker passes no
+   USB filters, so paired Bluetooth serial modules appear too. **Not done:** any
+   run against real hardware or a real browser's Web Serial.
 4. **Arduino library.** Source and sink sketches on an Uno and an ESP32,
    running against phase 3. *In progress elsewhere.*
 5. **Bluetooth.** `BluetoothTransport` (a `ByteTransport` subclass: it supplies

@@ -1,6 +1,7 @@
 import "./style.css";
 import {
   AnalysisMethod,
+  ArduinoReceiver,
   EMOTIVReceiver,
   FaceEmotionReceiver,
   FaceLandmarkReceiver,
@@ -13,6 +14,9 @@ import {
   Pipeline,
   RPPGReceiver,
   Recorder,
+  SAMPLE_FORMATS,
+  SerialTransport,
+  SimulatedArduino,
   VideoReceiver,
   VoiceEmotionReceiver,
 } from "yq-data";
@@ -418,6 +422,256 @@ document
     toggle("voice-connect", false);
     toggle("voice-disconnect", true);
   });
+
+/* -------------------------------------------------------------------------- */
+/* Arduino                                                                    */
+/* -------------------------------------------------------------------------- */
+
+let arduino;
+let arduinoTransport;
+let arduinoSubscriptions = [];
+let arduinoTimers = [];
+let arduinoDraw;
+const arduinoRows = new Map();
+
+/**
+ * A board in memory that announces a sine-wave sensor, a button and an LED
+ * output, so the panel can be tried without hardware. It is the same
+ * protocol over the same transport as a real board; only the port is fake.
+ */
+function simulatedBoard() {
+  const sim = new SimulatedArduino({
+    id: "sim-1",
+    name: "Simulated board",
+    firmware: "yq-data demo",
+    streams: [
+      { name: "pot", format: "uint16", rate: 50, scale: 5 / 1024, unit: "V" },
+      { name: "button", format: "uint8", categories: ["released", "pressed"] },
+      { name: "led", sink: true, format: "uint8", scale: 1 / 255 },
+    ],
+  });
+
+  // A board only sends while it has been told to start; emit() knows that.
+  let sample = 0;
+  const sensor = setInterval(() => {
+    const values = [];
+    for (let i = 0; i < 5; i++) {
+      values.push(2.5 + 2.5 * Math.sin((2 * Math.PI * 0.2 * sample++) / 50));
+    }
+    sim.emit("pot", values);
+  }, 100);
+
+  const button = setInterval(() => {
+    sim.emitRaw("button", [1]);
+    setTimeout(() => sim.emitRaw("button", [0]), 500);
+  }, 3000);
+
+  arduinoTimers.push(sensor, button);
+  return sim;
+}
+
+/** The describing text above the live values: who the board is, what it offers. */
+function arduinoHeader() {
+  const { board } = arduino.protocol;
+  const describe = (s) =>
+    `${s.name} — ${s.categories ? `${s.categories.join(" / ")}` : `${s.channels} ch`}` +
+    `${s.rate ? ` @ ${s.rate} Hz` : ""}${s.unit ? ` (${s.unit})` : ""}`;
+
+  return [
+    `${board?.name ?? "Board"} · id ${board?.id}` +
+      `${board?.firmware ? ` · firmware ${board.firmware}` : ""}`,
+    ...arduino.sources.map((s) => `  in   ${describe(s)}`),
+    ...arduino.sinks.map((s) => `  out  ${describe(s)}`),
+  ].join("\n");
+}
+
+/** Draws the header and the latest value of every stream, at most 10 times a second. */
+function scheduleArduinoDraw() {
+  if (arduinoDraw) return;
+  arduinoDraw = setTimeout(() => {
+    arduinoDraw = undefined;
+    if (!arduino) return;
+    const { stats } = arduinoTransport;
+    document.getElementById("arduino-output").textContent =
+      `${arduinoHeader()}\n\n${Array.from(arduinoRows.values()).join("\n\n")}\n\n` +
+      `frames ${stats.frames}, dropped ${stats.dropped.crc + stats.dropped.cobs + stats.dropped.length + stats.dropped.decode}`;
+  }, 100);
+}
+
+function renderArduino(packet) {
+  const source = arduino.sources.find((s) => s.streamID === packet.streamID);
+  const channels = source?.channels ?? packet.metadata.channelCount ?? 1;
+  const last = packet.data.length - channels;
+
+  let values;
+  if (packet.labels) {
+    // A categorical stream sends events, not samples: show the last one.
+    values = [packet.labels[packet.labels.length - 1]];
+  } else {
+    values = [];
+    for (let c = 0; c < channels; c++) {
+      values.push(
+        `${source?.labels?.[c] ?? c}: ${packet.data[last + c].toFixed(3)}${source?.unit ? ` ${source.unit}` : ""}`
+      );
+    }
+  }
+  arduinoRows.set(packet.streamID, `${source?.name ?? packet.streamID}\n  ${values.join("\n  ")}`);
+  scheduleArduinoDraw();
+}
+
+/**
+ * One row per sink, one slider per channel. The range and step come from how
+ * the board quantises the sink, so a slider can reach exactly the values the
+ * board can represent and no others.
+ */
+function buildSinkControls() {
+  const container = document.getElementById("arduino-sinks");
+  container.replaceChildren();
+
+  for (const sink of arduino.sinks) {
+    const format = SAMPLE_FORMATS[sink.format];
+    const low = format.min * sink.scale + sink.offset;
+    const high = format.max * sink.scale + sink.offset;
+    const sliders = [];
+
+    for (let c = 0; c < sink.channels; c++) {
+      const label = document.createElement("label");
+      const name = document.createElement("span");
+      name.className = "sink-name";
+      name.textContent = sink.channels > 1 ? `${sink.name} ${sink.labels?.[c] ?? c}` : sink.name;
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = String(Math.min(low, high));
+      slider.max = String(Math.max(low, high));
+      slider.step = String(Math.abs(sink.scale));
+      slider.value = String(Math.min(Math.max(0, low), high));
+
+      const readout = document.createElement("span");
+      const show = () => (readout.textContent = Number(slider.value).toFixed(2));
+      show();
+
+      slider.addEventListener("input", () => {
+        show();
+        // A sink takes all its channels together, interleaved.
+        arduino.write(sink.name, sliders.map((s) => Number(s.value)));
+      });
+
+      sliders.push(slider);
+      label.append(name, slider, readout);
+      container.append(label);
+    }
+  }
+}
+
+/** Connecting locks the pickers; being connected unlocks ping and disconnect. */
+function setArduinoState(state) {
+  const idle = state === "idle";
+  toggle("arduino-connect", !idle);
+  toggle("arduino-simulate", !idle);
+  toggle("arduino-baud", !idle);
+  toggle("arduino-ping", state !== "connected");
+  toggle("arduino-disconnect", state !== "connected");
+}
+
+async function startArduino(transport, simulated) {
+  const output = document.getElementById("arduino-output");
+  setArduinoState("connecting");
+  output.textContent = simulated
+    ? "Starting the simulated board…"
+    : "Waiting for the board. Opening the port resets most boards, which takes a second or two…";
+
+  const board = new ArduinoReceiver(transport);
+  try {
+    await board.connect();
+  } catch (error) {
+    transport.close();
+    throw error;
+  }
+
+  arduino = board;
+  arduinoTransport = transport;
+
+  // Subscribed before the stream starts, and the stream started only once the
+  // handshake is done. A board that kept streaming from an earlier session (a
+  // Bluetooth module is not reset when it connects) goes quiet on our hello,
+  // but anything it sent before that arrives while the receiver is not yet
+  // streaming, and is dropped.
+  arduinoSubscriptions.push(board.data.subscribe(renderArduino));
+  arduinoSubscriptions.push(
+    transport.isOpen$.subscribe((open) => {
+      if (!open && arduino === board) {
+        output.textContent = "The board disconnected.";
+        void stopArduino();
+      }
+    })
+  );
+
+  buildSinkControls();
+  board.startStream();
+  setArduinoState("connected");
+  scheduleArduinoDraw();
+}
+
+async function stopArduino() {
+  const board = arduino;
+  const transport = arduinoTransport;
+  arduino = undefined;
+  arduinoTransport = undefined;
+
+  arduinoSubscriptions.forEach((s) => s.unsubscribe());
+  arduinoSubscriptions = [];
+  arduinoTimers.forEach(clearInterval);
+  arduinoTimers = [];
+  clearTimeout(arduinoDraw);
+  arduinoDraw = undefined;
+  arduinoRows.clear();
+  document.getElementById("arduino-sinks").replaceChildren();
+
+  await board?.disconnect();
+  // Wait for the port to be released, or picking it again would fail.
+  await transport?.closed;
+  setArduinoState("idle");
+}
+
+document.getElementById("arduino-connect").addEventListener("click", async () => {
+  try {
+    // No `filters`: the picker then lists every serial port, including the
+    // ones a Bluetooth module shows up as. A USB vendor filter would hide them.
+    const transport = await SerialTransport.request({
+      baudRate: Number(document.getElementById("arduino-baud").value) || 115200,
+    });
+    await startArduino(transport);
+  } catch (error) {
+    setArduinoState("idle");
+    fail("arduino-output", error);
+  }
+});
+
+document.getElementById("arduino-simulate").addEventListener("click", async () => {
+  try {
+    await SimulatedArduino.load();
+    const simulation = simulatedBoard();
+    await startArduino(new SerialTransport(simulation.port), true);
+  } catch (error) {
+    arduinoTimers.forEach(clearInterval);
+    arduinoTimers = [];
+    setArduinoState("idle");
+    fail("arduino-output", error);
+  }
+});
+
+document.getElementById("arduino-ping").addEventListener("click", async () => {
+  try {
+    const { roundTrip } = await arduino.ping();
+    arduinoRows.set("ping", `ping\n  round trip: ${roundTrip.toFixed(1)} ms`);
+  } catch (error) {
+    arduinoRows.set("ping", `ping\n  ${error.message}`);
+  }
+  scheduleArduinoDraw();
+});
+
+document.getElementById("arduino-disconnect").addEventListener("click", () => stopArduino());
 
 /* -------------------------------------------------------------------------- */
 /* LSL                                                                        */

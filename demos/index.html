@@ -91,6 +91,29 @@
       </section>
 
       <section class="panel">
+        <h2>Arduino</h2>
+        <p>
+          A board running the <code>yq-arduino</code> library, over Web Serial
+          (Chromium only). The board describes its own streams, so the sensors
+          appear below and each output it accepts gets a slider. Bluetooth
+          serial modules (HC-05 and the like) that your system has paired show
+          up in the same port picker. No board to hand? Try the simulated one.
+        </p>
+        <div class="controls">
+          <label>
+            Baud
+            <input id="arduino-baud" type="number" value="115200" min="300" step="1" />
+          </label>
+          <button id="arduino-connect">Connect board</button>
+          <button id="arduino-simulate">Simulated board</button>
+          <button id="arduino-ping" disabled>Ping</button>
+          <button id="arduino-disconnect" disabled>Disconnect</button>
+        </div>
+        <div class="sinks" id="arduino-sinks"></div>
+        <pre class="output" id="arduino-output"></pre>
+      </section>
+
+      <section class="panel">
         <h2>Lab Streaming Layer</h2>
         <div class="controls">
           <input id="lsl-url" value="ws://localhost:8080" size="30" />
