@@ -1,4 +1,5 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
+import type { StreamOptions } from "../../base_receiver";
 import {
   MEDIAPIPE_POSE_33,
   POSE_LANDMARK_NAMES,
@@ -82,9 +83,7 @@ export class PoseReceiver extends VisionReceiver {
       numPoses: this.options.numPoses,
     });
 
-    for (let i = 0; i < this.options.numPoses; i++) {
-      this.registerStream(i);
-    }
+    for (const options of this.plannedStreams()) this.ensureStream(options);
   }
 
   protected closeTask(): void {
@@ -96,8 +95,14 @@ export class PoseReceiver extends VisionReceiver {
     return subjectStreamName("landmarks", "pose", pose, this.options.numPoses);
   }
 
-  private registerStream(pose: number): void {
-    this.ensureStream({
+  protected plannedStreams(): StreamOptions[] {
+    return Array.from({ length: this.options.numPoses }, (_, pose) =>
+      this.streamOfPose(pose)
+    );
+  }
+
+  private streamOfPose(pose: number): StreamOptions {
+    return {
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.INFERRED,
       name: this.streamName(pose),
@@ -110,7 +115,7 @@ export class PoseReceiver extends VisionReceiver {
           this.options.worldCoordinates ? "world" : "image"
         ),
       },
-    });
+    };
   }
 
   protected processFrame(timestampMs: number): void {

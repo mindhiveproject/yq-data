@@ -11,7 +11,7 @@ import {
   Modality,
   ProcessingStage,
 } from "../../data_stream.interface";
-import { BaseReceiver } from "../base_receiver";
+import { BaseReceiver, StreamOptions } from "../base_receiver";
 import { map, bufferCount, Subject, Subscription } from "rxjs";
 
 const EEG_SAMPLING_RATE = 256;
@@ -141,22 +141,32 @@ export class MuseReceiver extends BaseReceiver {
       );
     }
 
+    for (const options of this.plannedStreams()) this.ensureStream(options);
+  }
+
+  /**
+   * Before connecting the model is unknown, so PPG is laid out as a Muse 2's;
+   * `connect()` registers the layout of the headband actually found.
+   */
+  protected plannedStreams(): StreamOptions[] {
     // muse-js publishes five names including AUX; only take the ones this
     // session actually streams, so channelCount matches the packet layout.
     const eegLabels = (channelNames as string[]).slice(0, this.eegChannelCount);
 
-    this.ensureStream({
-      modality: Modality.EEG,
-      processingStage: ProcessingStage.RAW,
-      additionalMetadata: {
-        samplingRate: EEG_SAMPLING_RATE,
-        channelInfo: toChannelInfo(eegLabels, "µV"),
-        bufferSize: 12,
+    const streams: StreamOptions[] = [
+      {
+        modality: Modality.EEG,
+        processingStage: ProcessingStage.RAW,
+        additionalMetadata: {
+          samplingRate: EEG_SAMPLING_RATE,
+          channelInfo: toChannelInfo(eegLabels, "µV"),
+          bufferSize: 12,
+        },
       },
-    });
+    ];
 
     if (this.muse.enablePpg) {
-      this.ensureStream({
+      streams.push({
         modality: Modality.PPG,
         processingStage: ProcessingStage.RAW,
         additionalMetadata: {
@@ -168,6 +178,8 @@ export class MuseReceiver extends BaseReceiver {
         },
       });
     }
+
+    return streams;
   }
 
   public async startStream(): Promise<void> {

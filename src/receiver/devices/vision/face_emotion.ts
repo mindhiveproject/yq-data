@@ -1,4 +1,5 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
+import type { StreamOptions } from "../../base_receiver";
 import {
   VisionReceiver,
   VisionAssetOptions,
@@ -192,9 +193,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
             scoreThreshold: this.options.minConfidence,
           });
 
-    for (let face = 0; face < this.options.numFaces; face++) {
-      this.registerStreams(face);
-    }
+    for (const options of this.plannedStreams()) this.ensureStream(options);
   }
 
   protected closeTask(): void {
@@ -207,8 +206,16 @@ export class FaceEmotionReceiver extends VisionReceiver {
     return subjectStreamName(base, "face", face, this.options.numFaces);
   }
 
-  private registerStreams(face: number): void {
-    this.ensureStream({
+  protected plannedStreams(): StreamOptions[] {
+    return Array.from({ length: this.options.numFaces }, (_, face) =>
+      this.streamsOfFace(face)
+    ).flat();
+  }
+
+  private streamsOfFace(face: number): StreamOptions[] {
+    const streams: StreamOptions[] = [];
+
+    streams.push({
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.INFERRED,
       name: this.nameFor("expressions", face),
@@ -219,7 +226,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
     });
 
     if (this.options.emitAgeGender) {
-      this.ensureStream({
+      streams.push({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: this.nameFor("age_gender", face),
@@ -234,7 +241,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
     }
 
     if (this.options.emitFaceBox) {
-      this.ensureStream({
+      streams.push({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: this.nameFor("face_box", face),
@@ -246,7 +253,7 @@ export class FaceEmotionReceiver extends VisionReceiver {
     }
 
     if (this.options.emitLandmarks) {
-      this.ensureStream({
+      streams.push({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: this.nameFor("landmarks", face),
@@ -256,6 +263,8 @@ export class FaceEmotionReceiver extends VisionReceiver {
         },
       });
     }
+
+    return streams;
   }
 
   protected processFrame(): void {

@@ -307,6 +307,12 @@ export interface PipelineOutputDescription {
    */
   points?: StreamPoint[];
   samplingRate?: number;
+  /**
+   * Why `channels` is empty, when it is: the first thing upstream that is not
+   * yet known, in words a user can act on ("no receiver is attached for
+   * "muse""). Absent when the output is known.
+   */
+  reason?: string;
 }
 
 /** How much a graph problem costs at runtime. */
@@ -1410,13 +1416,74 @@ export class Pipeline {
   }
 
   /**
+   * Why a node's output cannot be worked out yet, found by following the graph
+   * back to the first node that is itself unknown.
+   *
+   * Only meaningful for a node whose `knownOutputsOf` is empty.
+   */
+  private whyUnknown(
+    nodeId: string,
+    known: Map<string, StreamMetadata[]>
+  ): string | undefined {
+    const runtime = this.nodes.get(nodeId);
+    if (!runtime) return undefined;
+    const definition = runtime.definition;
+
+    const key = sourceKeyOf(definition);
+    if (key !== undefined) {
+      const receiver = this.receivers.get(key);
+      if (!receiver) {
+        return (
+          `no receiver is attached for "${key}", and "${nodeId}" declares no ` +
+          `expects; call attachReceiver("${key}", …) or give the node expects`
+        );
+      }
+      const carried = [
+        ...receiver.streams.map((id) => receiver.getStreamMeta(id)),
+        ...(receiver.streams.length === 0 ? receiver.expectedStreams() : []),
+      ].filter((meta): meta is StreamMetadata => meta !== undefined);
+      if (carried.length === 0) {
+        return (
+          `"${key}" (${receiver.deviceName}) has not announced its streams ` +
+          `and cannot say what they will be before it connects; connect it ` +
+          `or give "${nodeId}" expects`
+        );
+      }
+      return (
+        `"${key}" (${receiver.deviceName}) carries no stream matching ` +
+        `"${definition.stream}"; it has ${carried.map((m) => m.streamID).join(", ")}`
+      );
+    }
+
+    const upstream = (this.incoming.get(nodeId) ?? []).map((edge) => edge.from[0]);
+    if (upstream.length === 0) return `"${nodeId}" has no input`;
+
+    for (const from of upstream) {
+      if (this.knownOutputsOf(from, known).length === 0) {
+        return this.whyUnknown(from, known);
+      }
+    }
+
+    // Everything feeding this node is known, so the node itself is the gap.
+    const analyzer = runtime.analyzer;
+    if (analyzer && !isRouter(analyzer)) {
+      if (this.declaredOutputsOf(runtime, known) === undefined) {
+        return `"${nodeId}" does not declare its output ahead of data; it is known after its first packet`;
+      }
+      return `"${nodeId}" accepts none of the streams wired into it (see issues())`;
+    }
+    return `nothing reaches "${nodeId}" past its selection`;
+  }
+
+  /**
    * The streams a source node will deliver, as far as is known.
    *
    * What the attached receiver has registered, narrowed by the node's `stream`
    * — the same filter the subscription applies, rather than a lookup by an ID
    * reconstructed from the receiver's own device name. A receiver that has
-   * registered nothing (not attached, or a remote peer that has not announced)
-   * is no evidence of nothing, so the node's `expects` stand in.
+   * registered nothing is no evidence of nothing, so what stands in is, in
+   * turn, the node's `expects` (the graph's author knows the device) and the
+   * receiver's own `expectedStreams()` (a headset that has not connected yet).
    */
   private knownStreamsOfSource(runtime: NodeRuntime): StreamMetadata[] {
     const definition = runtime.definition;
@@ -1428,6 +1495,7 @@ export class Pipeline {
       if (meta) metas.push(meta);
     }
     if (metas.length === 0) metas.push(...(definition.expects ?? []));
+    if (metas.length === 0 && receiver) metas.push(...receiver.expectedStreams());
 
     const named = definition.stream;
     return named === undefined
@@ -1637,7 +1705,10 @@ export class Pipeline {
       };
 
       const outputs = this.knownOutputsOf(id, known);
-      if (outputs.length === 0) return [{ ...node, channels: [] }];
+      if (outputs.length === 0) {
+        const reason = this.whyUnknown(id, known);
+        return [{ ...node, channels: [], ...(reason ? { reason } : {}) }];
+      }
 
       return outputs.map((meta): PipelineOutputDescription => {
         const layout = pointLayoutOf(meta);

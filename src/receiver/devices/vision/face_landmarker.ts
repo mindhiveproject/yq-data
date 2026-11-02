@@ -1,4 +1,5 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
+import type { StreamOptions } from "../../base_receiver";
 import {
   VisionReceiver,
   VisionAssetOptions,
@@ -127,9 +128,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
       numFaces: this.options.numFaces,
     });
 
-    for (let face = 0; face < this.options.numFaces; face++) {
-      this.registerStreams(face);
-    }
+    for (const options of this.plannedStreams()) this.ensureStream(options);
   }
 
   protected closeTask(): void {
@@ -157,10 +156,17 @@ export class FaceLandmarkReceiver extends VisionReceiver {
     return subjectStreamName(base, "face", face, this.options.numFaces);
   }
 
-  private registerStreams(face: number): void {
-    const nameFor = (base: string) => this.nameFor(base, face);
+  protected plannedStreams(): StreamOptions[] {
+    return Array.from({ length: this.options.numFaces }, (_, face) =>
+      this.streamsOfFace(face)
+    ).flat();
+  }
 
-    this.ensureStream({
+  private streamsOfFace(face: number): StreamOptions[] {
+    const nameFor = (base: string) => this.nameFor(base, face);
+    const streams: StreamOptions[] = [];
+
+    streams.push({
       modality: Modality.VIDEO,
       processingStage: ProcessingStage.INFERRED,
       name: nameFor("blendshapes"),
@@ -171,7 +177,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
     });
 
     if (this.options.emitHeadPose) {
-      this.ensureStream({
+      streams.push({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: nameFor("head_pose"),
@@ -187,7 +193,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
     }
 
     if (this.options.emitFaceBox) {
-      this.ensureStream({
+      streams.push({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: nameFor("face_box"),
@@ -199,7 +205,7 @@ export class FaceLandmarkReceiver extends VisionReceiver {
     }
 
     if (this.options.emitLandmarks) {
-      this.ensureStream({
+      streams.push({
         modality: Modality.VIDEO,
         processingStage: ProcessingStage.INFERRED,
         name: nameFor("landmarks"),
@@ -213,6 +219,8 @@ export class FaceLandmarkReceiver extends VisionReceiver {
         },
       });
     }
+
+    return streams;
   }
 
   protected processFrame(timestampMs: number): void {

@@ -563,6 +563,20 @@ connected or a headset that is not on:
 These stand in until the receiver announces streams of its own, and are replaced
 by whatever it announces, so a stale declaration can never override a device.
 
+Most of the time you do not need `expects`. A receiver that works out its
+streams from its own options says so before it connects
+(`receiver.expectedStreams()`): `MuseReceiver`, `FaceLandmarkReceiver`,
+`FaceEmotionReceiver`, `PoseReceiver` and `RPPGReceiver` do, so a graph built
+over any of them describes itself as soon as the receiver is attached, with no
+headset on and no model loaded. A Muse's PPG is laid out as a Muse 2's until it
+connects and reports its model. Receivers that only learn their streams from
+the hardware or a peer (Emotiv, LSL, Arduino, audio) stay unknown until they
+connect, and are where `expects` earns its place.
+
+When an output is unknown, `describe()` says why in `reason`: no receiver
+attached for a key, a receiver that has not announced anything, or a node
+upstream that declares nothing ahead of data.
+
 ### Windowing is explicit
 
 Devices deliver signal in whatever chunk their transport dictates — Muse sends

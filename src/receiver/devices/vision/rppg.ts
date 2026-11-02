@@ -1,4 +1,5 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
+import type { StreamOptions } from "../../base_receiver";
 import {
   VisionReceiver,
   VisionAssetOptions,
@@ -314,20 +315,26 @@ export class RPPGReceiver extends VisionReceiver {
     if (this.context) this.context.imageSmoothingQuality = "high";
     this.resampler = new FrameResampler(this.samplingRate, this.options.maxGap * 1000);
 
-    this.ensureStream({
-      modality: Modality.VIDEO,
-      processingStage: ProcessingStage.PREPROCESSED,
-      name: "rppg",
-      additionalMetadata: {
-        samplingRate: this.samplingRate,
-        channelInfo: [
-          { index: 0, label: "red" },
-          { index: 1, label: "green" },
-          { index: 2, label: "blue" },
-        ],
-        additionalMetadata: { region: this.options.region, sampleClock: true },
+    for (const options of this.plannedStreams()) this.ensureStream(options);
+  }
+
+  protected plannedStreams(): StreamOptions[] {
+    return [
+      {
+        modality: Modality.VIDEO,
+        processingStage: ProcessingStage.PREPROCESSED,
+        name: "rppg",
+        additionalMetadata: {
+          samplingRate: this.samplingRate,
+          channelInfo: [
+            { index: 0, label: "red" },
+            { index: 1, label: "green" },
+            { index: 2, label: "blue" },
+          ],
+          additionalMetadata: { region: this.options.region, sampleClock: true },
+        },
       },
-    });
+    ];
   }
 
   protected closeTask(): void {

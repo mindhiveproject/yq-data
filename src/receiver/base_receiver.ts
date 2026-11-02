@@ -27,7 +27,7 @@ export interface PacketOptions {
   labels?: string[];
 }
 
-interface StreamOptions {
+export interface StreamOptions {
   modality: Modality;
   processingStage?: ProcessingStage;
   name?: string;
@@ -175,9 +175,20 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
       subject.subscribe(this.allData$);
     }
 
+    this.streamMeta.set(streamID, this.metadataFor(streamID, options));
+
+    this.streams$.next(this.streams);
+
+    return streamID;
+  }
+
+  private metadataFor(
+    streamID: StreamIdentifierLiteral,
+    options: StreamOptions
+  ): StreamMetadata {
     const additional = options.additionalMetadata ?? {};
 
-    this.streamMeta.set(streamID, {
+    return {
       streamID: streamID,
       modality: options.modality,
       deviceInfo: {
@@ -191,11 +202,37 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
       // that describe their electrodes get the right layout for free.
       channelCount:
         additional.channelCount ?? additional.channelInfo?.length ?? 1,
-    });
+    };
+  }
 
-    this.streams$.next(this.streams);
+  /**
+   * The streams this receiver will register, worked out from its own options.
+   *
+   * Override it where the layout does not depend on anything learned by
+   * talking to the device, and register through it too, so what a receiver
+   * promises before `connect()` and what it publishes after cannot drift
+   * apart. Left empty for a device that only learns its streams from the
+   * hardware or a peer — an Emotiv subscription, an LSL outlet — which then
+   * stay unknown until it connects.
+   */
+  protected plannedStreams(): StreamOptions[] {
+    return [];
+  }
 
-    return streamID;
+  /**
+   * Metadata of the streams this receiver will carry once connected, before
+   * it has connected. Empty where that cannot be known.
+   *
+   * A device whose identity arrives with the connection (a Muse's serial) is
+   * named here by `deviceName` alone, so the `streamID` can differ from the
+   * live one; the modality, rate and channels are what the preview vouches
+   * for. Once a stream is registered the receiver's own metadata supersedes
+   * this.
+   */
+  public expectedStreams(): StreamMetadata[] {
+    return this.plannedStreams().map((options) =>
+      this.metadataFor(this.streamIDFor(options), options)
+    );
   }
 
   private streamIDFor(options: StreamOptions): StreamIdentifierLiteral {
