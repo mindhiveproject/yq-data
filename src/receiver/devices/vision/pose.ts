@@ -34,7 +34,7 @@ export interface PoseOptions extends VisionAssetOptions {
  *
  * Emits one stream of 33 landmarks flattened to x, y, z (and optionally
  * visibility) per landmark. The stream declares its stride and topology rather
- * than labelling every value; `pointChannelGroups` turns that into
+ * than labelling every value; `streamPoints` turns that into
  * "left wrist" and the indices of its components.
  *
  * Lugaresi, C. et al. (2019). MediaPipe: A Framework for Building Perception

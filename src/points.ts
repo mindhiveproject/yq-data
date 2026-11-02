@@ -57,25 +57,25 @@ export function pointStride(
   return second !== undefined && second > 0 ? second : 3;
 }
 
-/** One point of a point stream and where its values sit in a packet. */
-export interface PointGroup {
+/** One point of a point stream and the channels its components occupy. */
+export interface StreamPoint {
   /** The point's name, e.g. "left wrist"; "point 12" when the topology has no names. */
   label: string;
-  /** Positions of the point's components in the flattened data, in component order. */
+  /** Channel indices of the point's components in the packet, in component order. */
   indices: number[];
 }
 
 /**
  * The points of a stream built with `pointStreamMetadata`, each with the
- * packet indices of its components: `[{ label: "nose", indices: [0, 1, 2] }, …]`.
+ * channel indices of its components: `[{ label: "nose", indices: [0, 1, 2] }, …]`.
  *
  * This is the labelling that one `channelInfo` entry per value used to carry,
  * rebuilt from the stride and topology the metadata does carry. A stream that
- * declares no `pointComponents` is not a point stream and has no groups.
+ * declares no `pointComponents` is not a point stream and has no points.
  */
-export function pointChannelGroups(
+export function streamPoints(
   metadata: Pick<StreamMetadata, "channelCount" | "additionalMetadata">
-): PointGroup[] {
+): StreamPoint[] {
   const components = metadata.additionalMetadata?.pointComponents;
   if (!Array.isArray(components) || components.length === 0) return [];
 

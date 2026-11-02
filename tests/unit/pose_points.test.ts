@@ -5,7 +5,7 @@ import {
   PoseReceiver,
   flattenPoints,
   pointBounds,
-  pointChannelGroups,
+  streamPoints,
   pointStride,
   subjectStreamName,
   pointStreamMetadata,
@@ -62,42 +62,42 @@ describe("pose point stream", () => {
   });
 });
 
-describe("pointChannelGroups", () => {
+describe("streamPoints", () => {
   it("names each pose landmark and indexes its components", () => {
-    const groups = pointChannelGroups(
+    const points = streamPoints(
       pointStreamMetadata(33, ["x", "y", "z"], MEDIAPIPE_POSE_33) as any
     );
 
-    expect(groups).toHaveLength(33);
-    expect(groups[0]).toEqual({ label: "nose", indices: [0, 1, 2] });
+    expect(points).toHaveLength(33);
+    expect(points[0]).toEqual({ label: "nose", indices: [0, 1, 2] });
     const wrist = POSE_LANDMARK_NAMES.indexOf("left wrist");
-    expect(groups[wrist]).toEqual({
+    expect(points[wrist]).toEqual({
       label: "left wrist",
       indices: [wrist * 3, wrist * 3 + 1, wrist * 3 + 2],
     });
   });
 
   it("uses the declared stride", () => {
-    const groups = pointChannelGroups(
+    const points = streamPoints(
       pointStreamMetadata(33, ["x", "y", "z", "visibility"], MEDIAPIPE_POSE_33) as any
     );
 
-    expect(groups[1].indices).toEqual([4, 5, 6, 7]);
+    expect(points[1].indices).toEqual([4, 5, 6, 7]);
   });
 
   it("numbers points of a topology without names", () => {
-    const groups = pointChannelGroups(
+    const points = streamPoints(
       pointStreamMetadata(2, ["x", "y"], FACE_API_68) as any
     );
 
-    expect(groups).toEqual([
+    expect(points).toEqual([
       { label: "point 0", indices: [0, 1] },
       { label: "point 1", indices: [2, 3] },
     ]);
   });
 
   it("returns nothing for a stream that is not a point stream", () => {
-    expect(pointChannelGroups({ channelCount: 4 })).toEqual([]);
+    expect(streamPoints({ channelCount: 4 })).toEqual([]);
   });
 });
 

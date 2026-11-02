@@ -25,7 +25,7 @@ import {
 import { createAnalyzer } from "../analyzer/registry";
 import { acceptsFor, checkAccepts } from "../analyzer/compatibility";
 import { matchesStreamFilter, streamFilterFor } from "../utility";
-import { PointGroup, pointChannelGroups } from "../points";
+import { StreamPoint, streamPoints } from "../points";
 import { Observable, Subject, Subscription, merge } from "rxjs";
 
 /** Default port name for the single-input, single-output case. */
@@ -274,8 +274,8 @@ function isVerdictFor(key: string, port: string): boolean {
  */
 function pointLayoutOf(
   meta: StreamMetadata
-): { points: PointGroup[]; channels: PipelineOutputDescription["channels"] } | undefined {
-  const points = pointChannelGroups(meta);
+): { points: StreamPoint[]; channels: PipelineOutputDescription["channels"] } | undefined {
+  const points = streamPoints(meta);
   if (points.length === 0) return undefined;
 
   const components = meta.additionalMetadata!.pointComponents as string[];
@@ -305,7 +305,7 @@ export interface PipelineOutputDescription {
    * ("left wrist x"), exactly as `channelCount` and `ChannelSelection` count
    * them. These are the same indices, gathered by the point they belong to.
    */
-  points?: PointGroup[];
+  points?: StreamPoint[];
   samplingRate?: number;
 }
 

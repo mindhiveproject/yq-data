@@ -261,7 +261,7 @@ metric rather than positions in the frame, declare `coordinateSpace: "world"`,
 and are not drawn.
 
 Face and body landmarks are described and read by the same helpers:
-`pointStreamMetadata` (stride, `topology`, `coordinateSpace`), `pointChannelGroups`
+`pointStreamMetadata` (stride, `topology`, `coordinateSpace`), `streamPoints`
 (a name and packet indices per point, e.g. `"left wrist"`), `pointStride`,
 `pointBounds`, and `topologyEdges` / `topologyPointNames` for what the model
 fixes. Multi-subject streams are named `landmarks_face_2` / `landmarks_pose_2`.
