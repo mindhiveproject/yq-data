@@ -25,6 +25,7 @@ import {
 import { createAnalyzer } from "../analyzer/registry";
 import { acceptsFor, checkAccepts } from "../analyzer/compatibility";
 import { matchesStreamFilter, streamFilterFor } from "../utility";
+import { PointGroup, pointChannelGroups } from "../points";
 import { Observable, Subject, Subscription, merge } from "rxjs";
 
 /** Default port name for the single-input, single-output case. */
@@ -263,6 +264,30 @@ function isVerdictFor(key: string, port: string): boolean {
   return key.startsWith(`${port} `);
 }
 
+/**
+ * The points and per-value labels of a point stream, or undefined for any other
+ * stream.
+ *
+ * Point streams declare a stride and topology instead of a `channelInfo` entry
+ * per value (see `pointStreamMetadata`), so their labels are rebuilt here:
+ * "nose x", "nose y", … in packet order.
+ */
+function pointLayoutOf(
+  meta: StreamMetadata
+): { points: PointGroup[]; channels: PipelineOutputDescription["channels"] } | undefined {
+  const points = pointChannelGroups(meta);
+  if (points.length === 0) return undefined;
+
+  const components = meta.additionalMetadata!.pointComponents as string[];
+  const channels = points.flatMap((point) =>
+    point.indices.map((index, c) => ({
+      index,
+      label: `${point.label} ${components[c]}`,
+    }))
+  );
+  return { points, channels };
+}
+
 /** One output of a pipeline, as {@link Pipeline.describe} reports it. */
 export interface PipelineOutputDescription {
   nodeId: string;
@@ -270,6 +295,17 @@ export interface PipelineOutputDescription {
   method?: string;
   streamID?: string;
   channels: Array<{ index: number; label: string; unit?: string }>;
+  /**
+   * For a point stream (face or body landmarks), the points it carries and the
+   * `channels` indices of each one's components, e.g. `"left wrist"` →
+   * `[48, 49, 50]`. Absent for any other stream.
+   *
+   * A view over `channels`, not a level beneath them: a stream of 33 points of
+   * x, y, z has 99 channels, every one of them listed there and labelled
+   * ("left wrist x"), exactly as `channelCount` and `ChannelSelection` count
+   * them. These are the same indices, gathered by the point they belong to.
+   */
+  points?: PointGroup[];
   samplingRate?: number;
 }
 
@@ -1603,12 +1639,16 @@ export class Pipeline {
       const outputs = this.knownOutputsOf(id, known);
       if (outputs.length === 0) return [{ ...node, channels: [] }];
 
-      return outputs.map((meta): PipelineOutputDescription => ({
-        ...node,
-        streamID: meta.streamID,
-        channels: meta.channelInfo ?? [],
-        samplingRate: meta.samplingRate,
-      }));
+      return outputs.map((meta): PipelineOutputDescription => {
+        const layout = pointLayoutOf(meta);
+        return {
+          ...node,
+          streamID: meta.streamID,
+          channels: layout?.channels ?? meta.channelInfo ?? [],
+          ...(layout ? { points: layout.points } : {}),
+          samplingRate: meta.samplingRate,
+        };
+      });
     });
   }
 }

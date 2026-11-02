@@ -22,6 +22,8 @@ import {
   createAnalyzer,
   registerAnalyzer,
   streamIDToString,
+  pointStreamMetadata,
+  MEDIAPIPE_POSE_33,
   Accepts,
   AnyAnalyzer,
   isMultiInput,
@@ -646,6 +648,55 @@ describe("what cannot be known ahead of data is not refused", () => {
   it("exposes a way for a custom node to say its rate is not known yet", () => {
     expect(typeof UNRESOLVED).toBe("symbol");
     expect(isMultiInput(createAnalyzer("merge", {}))).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* point streams                                                               */
+/* -------------------------------------------------------------------------- */
+
+describe("describe() of a point stream", () => {
+  const pose = (components: string[]): StreamMetadata => ({
+    streamID: "cam:pose:landmarks",
+    modality: Modality.VIDEO,
+    samplingRate: 30,
+    ...pointStreamMetadata(33, components, MEDIAPIPE_POSE_33),
+  });
+
+  const describePose = (meta: StreamMetadata) =>
+    new Pipeline({
+      nodes: [{ id: "wire", receive: { transport: "cloud" }, expects: [meta] }],
+      edges: [],
+    }).describe()[0];
+
+  it("names each point and where its components sit among the channels", () => {
+    const out = describePose(pose(["x", "y", "z"]));
+
+    expect(out.points).toHaveLength(33);
+    expect(out.points![0]).toEqual({ label: "nose", indices: [0, 1, 2] });
+    expect(out.samplingRate).toBe(30);
+  });
+
+  it("labels every value, in packet order", () => {
+    const out = describePose(pose(["x", "y", "z", "visibility"]));
+
+    expect(out.channels).toHaveLength(33 * 4);
+    expect(out.channels.slice(0, 5)).toEqual([
+      { index: 0, label: "nose x" },
+      { index: 1, label: "nose y" },
+      { index: 2, label: "nose z" },
+      { index: 3, label: "nose visibility" },
+      { index: 4, label: "left eye (inner) x" },
+    ]);
+    expect(out.channels.map((c) => c.index)).toEqual(out.channels.map((_, i) => i));
+  });
+
+  it("leaves points off a stream that is not made of points", () => {
+    const [power] = new Pipeline({
+      nodes: [{ id: "eeg", receiver: "dev" }],
+      edges: [],
+    }).describe();
+    expect(power).not.toHaveProperty("points");
   });
 });
 

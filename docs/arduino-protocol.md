@@ -192,8 +192,10 @@ app                                    board
 
 Opening a serial port toggles DTR, which **resets an Uno and most ESP32 dev
 boards**, so the board is deaf for 1–2 s. That is what the hello retry loop is
-for. On connection loss the board returns to idle; on reconnect the app starts
-again from `hello`.
+for. A paired Bluetooth serial port has no such line, so the board keeps running
+and may still be streaming when the app arrives; `hello` puts it back to idle. On
+connection loss the board returns to idle; on reconnect the app starts again from
+`hello`.
 
 ## 4. Worked example
 
@@ -259,7 +261,7 @@ them rather than adding a second path. Everything below exists except
 | COBS, CRC-16 | `src/transport/framing.ts` | Pure functions. ~40 lines. |
 | MessagePack codec | `src/transport/msgpack.ts` | A `WireCodec` over `@msgpack/msgpack`. **Optional peer dependency, loaded with `import()`** like `jszip` and `papaparse`. |
 | Byte transport base | `src/transport/byte_transport.ts` | A `BaseTransport` subclass: bytes in → deframe → CRC → codec → `emit()`; `send()` → codec → CRC → COBS → bytes out. Subclasses supply only `write(bytes)` and call `feed(bytes)`. |
-| `SerialTransport` | `src/transport/serial.ts` | Web Serial. Takes `baudRate`, optional pre-granted `port`. |
+| `SerialTransport` | `src/transport/serial.ts` | Web Serial, including paired classic Bluetooth modules (§7). Takes `baudRate`, optional pre-granted `port`. |
 | `BluetoothTransport` | `src/transport/bluetooth.ts` | Web Bluetooth. Defaults to the Nordic UART Service; service and characteristic UUIDs configurable. Writes in `chunkSize` slices (default 20). |
 | `Protocol` interface | `src/transport/protocol.ts` | What every protocol provides: `decode`, `encodePacket`, optional `encodeMeta`. Shared with yq-stream. |
 | `ArduinoProtocol` | `src/transport/arduino_protocol.ts` | yq-arduino as a `Protocol`. Stateful, one per board, because `data` needs the descriptors. Encodes packets for sinks, routed by `route`. |
@@ -336,12 +338,28 @@ repository root, so the library should be its own repo (working name
 library repo copies the vectors in.
 
 **Core rule: depend only on `Stream&`.** `Serial`, `SoftwareSerial`, a
-`HardwareSerial` wired to an HM-10 or Bluefruit module, USB CDC, and an ESP32
-BLE UART shim are all `Stream`. On AVR, BLE is always an external module that
-looks like serial, so AVR needs no BLE code at all. ESP32 gets one small
-`Stream` adapter over the Nordic UART Service (NimBLE or the stock BLE library).
-ESP32 classic Bluetooth (SPP) cannot be reached from a browser and is out of
-scope.
+`HardwareSerial` wired to an HC-05, HM-10 or Bluefruit module, USB CDC, and an
+ESP32 BLE UART shim are all `Stream`. On AVR, Bluetooth is always an external
+module that looks like serial, so AVR needs no Bluetooth code at all. ESP32 gets
+one small `Stream` adapter over the Nordic UART Service (NimBLE or the stock BLE
+library).
+
+**Classic Bluetooth (SPP) is a serial port, not another transport.** Since
+Chrome 117 on desktop, Web Serial opens paired SPP devices, and a plain
+`requestPort()` lists them, so an HC-05 or HC-06 paired in the operating system
+reaches the app through `SerialTransport` with no extra code on either side. Not
+yet tried on hardware. Three things differ from USB:
+
+- USB `filters` hide it: they match USB IDs, and a Bluetooth port has none.
+- The link's speed is set by the module's UART rate, so the sketch has to match
+  the module, and the `baudRate` given to `SerialTransport` does not change it.
+- Opening the port does not reset the board (§3.5).
+
+An ESP32's own classic Bluetooth is reachable the same way, but it is not a
+target. arduino-esp32 marks `BluetoothSerial` deprecated, says 4.0.0 will not
+support it by default, and it exists only on chips with classic Bluetooth, which
+rules out the S3 and C3. BLE is the ESP32's wireless path. A sketch can still pass
+a `BluetoothSerial` as its `Stream`.
 
 Sketch of the API (not final):
 

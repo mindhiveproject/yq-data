@@ -266,6 +266,12 @@ Face and body landmarks are described and read by the same helpers:
 `pointBounds`, and `topologyEdges` / `topologyPointNames` for what the model
 fixes. Multi-subject streams are named `landmarks_face_2` / `landmarks_pose_2`.
 
+`pipeline.describe()` uses the same helper: for a point stream, each output
+lists every value in `channels` (`"left wrist x"`, `"left wrist y"`, …, as
+`channelCount` and `ChannelSelection` count them) and adds `points`, which
+gathers those same indices by point (`{ label: "left wrist", indices: [48, 49, 50] }`),
+so a node editor can list landmarks without knowing the stream is one.
+
 A receiver publishes nothing for a frame with no face. That silence is how a
 face leaving the frame reaches the canvas: it is cleared once its streams have
 been quiet for `staleAfter` (by default four of the stream's own packet
