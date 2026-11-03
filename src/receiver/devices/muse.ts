@@ -1,94 +1,125 @@
-import {
-  MuseClient,
-  channelNames,
-  EEGReading,
-  PPGReading,
-  MuseDeviceInfo,
-} from "muse-js";
+import { AthenaPreset, MuseAthenaClient, MuseClient, MuseDeviceInfo } from "muse-jsx";
 
-import {
-  ChannelInfo,
-  Modality,
-  ProcessingStage,
-} from "../../data_stream.interface";
+import { Modality } from "../../data_stream.interface";
 import { BaseReceiver, StreamOptions } from "../base_receiver";
-import { map, bufferCount, Subject, Subscription } from "rxjs";
+import { AthenaMuseDriver } from "./muse_athena";
+import {
+  MuseDriver,
+  MuseGeneration,
+  museConnectionWithin,
+  requestMuseGatt,
+} from "./muse_ble";
+import { ClassicMuseDriver } from "./muse_classic";
 
-const EEG_SAMPLING_RATE = 256;
-const PPG_SAMPLING_RATE = 64;
+export type { AthenaPreset };
 
-/**
- * PPG channel layouts differ between Muse models, and the device name is a
- * serial like "Muse-4B2C" rather than the model, so the model is inferred
- * from the name's prefix.
- */
-const PPG_CHANNELS: Record<string, string[]> = {
-  Muse2: ["ambient", "infrared", "red"],
-  MuseS: ["infrared", "green", "unknown"],
-};
-
-function ppgChannelsFor(deviceName: string | undefined): string[] {
-  if (deviceName && /muse-?s/i.test(deviceName)) return PPG_CHANNELS.MuseS;
-  return PPG_CHANNELS.Muse2;
+export interface MuseOptions {
+  /**
+   * Which generation to expect. By default the headband picked in the chooser
+   * decides.
+   *
+   * Name one for an exact layout from `expectedStreams()` before connecting;
+   * an undecided receiver previews a Muse 2's. Naming one also refuses a
+   * headband that is plainly the other generation.
+   */
+  model?: MuseGeneration | "auto";
+  /** Publish optical channels. Default `true`. */
+  enablePPG?: boolean;
+  /** Publish the auxiliary EEG channels. Default `false`. */
+  enableAUX?: boolean;
+  /**
+   * What a Muse S Athena streams; other models ignore it. Defaults to `p1041`,
+   * 8 EEG and 16 optical channels, the only presets with red LEDs and ambient
+   * channels, or `p21` when `enablePPG` is false.
+   */
+  preset?: AthenaPreset;
 }
 
-function toChannelInfo(labels: string[], unit?: string): ChannelInfo[] {
-  return labels.map((label, index) => ({
-    index,
-    label,
-    ...(unit ? { unit } : {}),
-  }));
-}
-
 /**
- * Muse headband receiver, over Web Bluetooth.
+ * Muse headband receiver, over Web Bluetooth, for a Muse 2, a classic Muse S or
+ * a Muse S Athena. Web Bluetooth limits this to Chrome-based browsers.
  *
- * The Bluetooth GATT protocol is spoken by muse-js, which handles connection,
- * subscription and decoding of the headband's packed 12-bit samples. Web
- * Bluetooth limits this to Chrome-based browsers.
+ * The two generations speak different Bluetooth protocols, both handled by
+ * muse-jsx. Which one a headband speaks is found on connecting, so the same
+ * code and the same graph serve either.
  *
- * @see https://github.com/urish/muse-js
+ * @see https://github.com/fuji3to4/muse-jsx
  *
- * Emits raw EEG at 256 Hz and, when enabled, raw PPG at 64 Hz. Derived
- * quantities — band power, heart rate — are deliberately not computed here;
- * build a {@link Pipeline} over these raw streams instead, so the same
+ * Emits raw EEG at 256 Hz and, when enabled, raw optical channels at 64 Hz as
+ * `Modality.PPG`. An Athena also emits accelerometer and gyroscope at 52 Hz.
+ * Derived quantities — band power, heart rate — are deliberately not computed
+ * here; build a {@link Pipeline} over these raw streams instead, so the same
  * analysis code serves every device.
+ *
+ * The PPG stream is the raw sensor, so pick the pulse channel by label before
+ * heart rate. Its name differs by generation; list both, as a label the stream
+ * does not have is skipped: `labels: ["infrared", "LI_RED"]`.
  */
 export class MuseReceiver extends BaseReceiver {
   deviceName: string = "Muse";
   deviceID: string | number | undefined;
+  modalities: Modality[] = [];
 
-  modalities: Modality[] = [
-    Modality.EEG,
-    Modality.PPG,
-    Modality.ACCELEROMETER,
-    Modality.GYROSCOPE,
-  ];
+  private readonly options: Required<Pick<MuseOptions, "enablePPG" | "enableAUX">> &
+    Pick<MuseOptions, "preset">;
+  private readonly model: MuseGeneration | "auto";
 
-  additionalInfo: MuseDeviceInfo | undefined;
-  private _eegData = new Subject<EEGReading>();
-  private _ppgData = new Subject<PPGReading>();
-  private streamSubscriptions: Subscription[] = [];
-  // muse-js bundles its own rxjs, so its Subscription type is not ours.
-  private readingSubscriptions: { unsubscribe(): void }[] = [];
+  private readonly drivers = new Map<MuseGeneration, MuseDriver>();
+  /** Connected, or else what `expectedStreams()` should preview. */
+  private driver!: MuseDriver;
 
-  /** 4 electrodes, or 5 when the auxiliary channel is enabled. */
-  private eegChannelCount = 4;
-
-  public muse: MuseClient;
-
-  constructor(enablePPG: boolean = true, enableAUX: boolean = false) {
+  /**
+   * @param options - Settings. A boolean is the older form of `enablePPG`.
+   * @param enableAUX - The older form of `options.enableAUX`.
+   */
+  constructor(options: MuseOptions | boolean = {}, enableAUX: boolean = false) {
     super();
 
-    const muse = new MuseClient();
-    muse.enablePpg = enablePPG;
-    muse.enableAux = enableAUX;
-    muse.connectionStatus.subscribe((connection) =>
-      this.isConnected$.next(connection)
-    );
+    const settings: MuseOptions =
+      typeof options === "boolean" ? { enablePPG: options, enableAUX } : options;
 
-    this.eegChannelCount = enableAUX ? 5 : 4;
-    this.muse = muse;
+    this.options = {
+      enablePPG: settings.enablePPG ?? true,
+      enableAUX: settings.enableAUX ?? false,
+      preset: settings.preset,
+    };
+    this.model = settings.model ?? "auto";
+
+    this.useDriver(this.model === "athena" ? "athena" : "classic");
+  }
+
+  /** The muse-jsx client for the current generation. */
+  get muse(): MuseClient | MuseAthenaClient {
+    return this.driver.client;
+  }
+
+  /** What the headband reports about itself, once it has answered. */
+  get additionalInfo(): MuseDeviceInfo | undefined {
+    return this.driver.additionalInfo;
+  }
+
+  private useDriver(generation: MuseGeneration): MuseDriver {
+    let driver = this.drivers.get(generation);
+
+    if (!driver) {
+      const publish = (modality: Modality, data: number[][], deviceTime: number) =>
+        this.update({ modality }, data, deviceTime);
+
+      driver =
+        generation === "athena"
+          ? new AthenaMuseDriver(this.options, publish)
+          : new ClassicMuseDriver(this.options, publish);
+
+      this.drivers.set(generation, driver);
+      driver.client.connectionStatus.subscribe((connection) =>
+        this.isConnected$.next(connection)
+      );
+    }
+
+    this.driver = driver;
+    this.deviceName = driver.deviceName;
+    this.modalities = driver.modalities;
+    return driver;
   }
 
   public async connect(timeoutDuration = 10000): Promise<void> {
@@ -97,166 +128,41 @@ export class MuseReceiver extends BaseReceiver {
       return;
     }
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      // Create a promise that rejects after the specified timeout
-      const timeoutPromise = new Promise<void>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new Error(
-              `Muse connection timed out after ${
-                timeoutDuration / 1000
-              } seconds.`
-            )
-          );
-        }, timeoutDuration);
-      });
-      await Promise.race([this.muse.connect(), timeoutPromise]);
+      await museConnectionWithin(
+        requestMuseGatt(this.model).then(({ gatt, generation }) =>
+          this.useDriver(generation).connect(gatt)
+        ),
+        timeoutDuration
+      );
     } catch (error) {
       console.error("Failed to connect to Muse device:", error);
       this.isConnected$.next(false);
       throw error;
-    } finally {
-      clearTimeout(timer);
     }
 
-    if (this.muse.deviceName) {
-      this.deviceID = this.muse.deviceName;
+    if (this.driver.client.deviceName) {
+      this.deviceID = this.driver.client.deviceName;
     }
 
-    this.additionalInfo = await this.muse.deviceInfo();
-
-    // Forward values only: muse-js completes its readings on disconnect, and
-    // passing that completion on would close these subjects for good.
-    // A headset that dropped on its own never ran disconnect(), so clear here.
-    this.readingSubscriptions.forEach((s) => s.unsubscribe());
-    this.readingSubscriptions = [];
-    this.readingSubscriptions.push(
-      this.muse.eegReadings.subscribe((reading) => this._eegData.next(reading))
-    );
-
-    if (this.muse.enablePpg) {
-      this.readingSubscriptions.push(
-        this.muse.ppgReadings.subscribe((reading) => this._ppgData.next(reading))
-      );
-    }
+    await this.driver.ready();
 
     for (const options of this.plannedStreams()) this.ensureStream(options);
   }
 
-  /**
-   * Before connecting the model is unknown, so PPG is laid out as a Muse 2's;
-   * `connect()` registers the layout of the headband actually found.
-   */
   protected plannedStreams(): StreamOptions[] {
-    // muse-js publishes five names including AUX; only take the ones this
-    // session actually streams, so channelCount matches the packet layout.
-    const eegLabels = (channelNames as string[]).slice(0, this.eegChannelCount);
-
-    const streams: StreamOptions[] = [
-      {
-        modality: Modality.EEG,
-        processingStage: ProcessingStage.RAW,
-        additionalMetadata: {
-          samplingRate: EEG_SAMPLING_RATE,
-          channelInfo: toChannelInfo(eegLabels, "µV"),
-          bufferSize: 12,
-        },
-      },
-    ];
-
-    if (this.muse.enablePpg) {
-      streams.push({
-        modality: Modality.PPG,
-        processingStage: ProcessingStage.RAW,
-        additionalMetadata: {
-          samplingRate: PPG_SAMPLING_RATE,
-          channelInfo: toChannelInfo(
-            ppgChannelsFor(this.muse.deviceName ?? undefined)
-          ),
-          bufferSize: 4,
-        },
-      });
-    }
-
-    return streams;
+    return this.driver.streams();
   }
 
   public async startStream(): Promise<void> {
-    await this.muse.start();
-
-    if (!this.isConnected) return;
-
-    // Subscribing again without this doubles every packet after a reconnect.
-    this.streamSubscriptions.forEach((s) => s.unsubscribe());
-    this.streamSubscriptions = [];
-
-    const eegChannels = this.eegChannelCount;
-
-    this.streamSubscriptions.push(
-      this._eegData
-        .pipe(
-          // muse-js delivers one electrode per reading; a full frame across
-          // all electrodes is what makes an interleaved packet possible.
-          bufferCount(eegChannels),
-          map((readings) => {
-            const { timestamp } = readings[0];
-            const out: number[][] = Array.from(
-              { length: eegChannels },
-              () => []
-            );
-
-            for (const { electrode, samples } of readings) {
-              if (electrode < eegChannels) out[electrode].push(...samples);
-            }
-
-            return { data: out, deviceTime: timestamp };
-          })
-        )
-        .subscribe(({ data, deviceTime }) => {
-          this.update({ modality: Modality.EEG }, data, deviceTime);
-        })
-    );
-
-    if (!this.muse.enablePpg) return;
-
-    this.streamSubscriptions.push(
-      this._ppgData
-        .pipe(
-          bufferCount(3),
-          map((readings) => {
-            const { timestamp } = readings[0];
-            const out: number[][] = [[], [], []];
-
-            for (const { ppgChannel, samples } of readings) {
-              if (ppgChannel < 3) out[ppgChannel].push(...samples);
-            }
-
-            return { data: out, deviceTime: timestamp };
-          })
-        )
-        .subscribe(({ data, deviceTime }) => {
-          this.update({ modality: Modality.PPG }, data, deviceTime);
-        })
-    );
+    await this.driver.startStream();
   }
 
   public async stopStream(): Promise<void> {
-    this.streamSubscriptions.forEach((s) => s.unsubscribe());
-    this.streamSubscriptions = [];
-    await this.muse.pause();
+    await this.driver.stopStream();
   }
 
   public async disconnect(): Promise<void> {
-    this.streamSubscriptions.forEach((s) => s.unsubscribe());
-    this.streamSubscriptions = [];
-    this.readingSubscriptions.forEach((s) => s.unsubscribe());
-    this.readingSubscriptions = [];
-
-    if (this.isConnected) {
-      this.muse.disconnect();
-    } else {
-      console.warn("Muse device is not connected.");
-    }
+    this.driver.disconnect();
   }
 }

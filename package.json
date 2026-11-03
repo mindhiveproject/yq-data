@@ -52,7 +52,7 @@
     "dist"
   ],
   "dependencies": {
-    "muse-js": "^3.3.0",
+    "muse-jsx": "^0.3.1",
     "rxjs": "^7.8.1"
   },
   "peerDependencies": {

@@ -97,7 +97,7 @@ A receiver owns a connection to one source and publishes packets.
 
 | Receiver | Source | Notes |
 |---|---|---|
-| `MuseReceiver` | Muse headband | Web Bluetooth. Raw EEG at 256 Hz, PPG at 64 Hz |
+| `MuseReceiver` | Muse 2, classic Muse S, [Muse S Athena](#muse-s-athena) | Web Bluetooth. Raw EEG at 256 Hz, PPG at 64 Hz; motion at 52 Hz on an Athena |
 | `EMOTIVReceiver` | EMOTIV headsets | Cortex API over WebSocket; needs credentials |
 | `LSLReceiver` | Lab Streaming Layer | Via a [WebSocket relay](#lab-streaming-layer); reads the `lsl` protocol; auto-reconnects |
 | `ArduinoReceiver` | Arduino, ESP32, other [microcontrollers](#microcontrollers) | Web Serial. The board announces its own streams; also writes to the board |
@@ -125,6 +125,57 @@ muse.data.subscribe((packet) => console.log(packet.streamID, packet.data));
 Every receiver exposes `connect`, `startStream`, `stopStream`, `disconnect`, an
 `isConnected$` observable, a merged `data` observable, and `getData(stream)` for
 one specific stream.
+
+### Muse S Athena
+
+The 2025 Muse S (model MS-03, USB-C) sends every sensor on one Bluetooth
+characteristic in a format of its own. `MuseReceiver` finds out which generation
+it has on connecting, so nothing has to know in advance:
+
+```ts
+const muse = new MuseReceiver();                       // whichever is picked
+const muse = new MuseReceiver({ preset: "p1035" });    // if it is an Athena, send this
+const muse = new MuseReceiver({ model: "athena" });    // expect an Athena
+```
+
+`model` is optional, and does two things. `expectedStreams()` and `describe()`
+then give the exact layout before connecting, where an undecided receiver previews
+a Muse 2's. And a headband that is plainly the other generation is refused, where
+an undecided receiver takes either.
+
+The preset decides what an Athena sends, and it never confirms one. A reading
+that does not fit the preset is dropped, with one warning.
+
+| Preset | EEG channels | Optical channels |
+|---|---|---|
+| `p21` | 4 | none |
+| `p1035` | 4 | 4 |
+| `p1034` | 4 | 8 |
+| `p1045`, `p1046`, `p4129` | 8 | 4 |
+| `p1044` | 8 | 8 |
+| `p1041` (default), `p1042` | 8 | 16 |
+
+The EEG stream is `TP9`, `AF7`, `AF8`, `TP10` under every preset. Pass
+`enableAUX: true` to add `AUX1`–`AUX4` on the presets that send them.
+
+Optical channels arrive on the `ppg` stream, labelled by side, detector and light:
+`LI_RED` is left inner, red. `730` and `850` are the LEDs in nm, and `AMB` is
+ambient light. One graph serves every generation, because `ChannelSelection` skips
+a label the stream does not have:
+
+```ts
+nodes: [
+  { id: "ppg",    receiver: "muse", stream: Modality.PPG },
+  { id: "pulse",  method: AnalysisMethod.CHANNEL_SELECTION, parameters: { labels: ["infrared", "LI_RED"] } },
+  { id: "window", method: AnalysisMethod.WINDOWING, parameters: { size: 10, hop: 1 } },
+  { id: "bpm",    method: AnalysisMethod.HEART_RATE },
+]
+```
+
+Only `p1041` and `p1042` send red and ambient channels, so this graph finds no
+pulse channel on an Athena under any other preset. A heart rate has been checked
+against a recording under `p1041` only, so test another preset before relying on
+it. An Athena's timestamps come from the host, not the headband's clock.
 
 ### One camera, several analyses
 
@@ -569,7 +620,8 @@ streams from its own options says so before it connects
 `FaceEmotionReceiver`, `PoseReceiver` and `RPPGReceiver` do, so a graph built
 over any of them describes itself as soon as the receiver is attached, with no
 headset on and no model loaded. A Muse's PPG is laid out as a Muse 2's until it
-connects and reports its model. Receivers that only learn their streams from
+connects and reports its model, unless it was told to expect an
+[Athena](#muse-s-athena). Receivers that only learn their streams from
 the hardware or a peer (Emotiv, LSL, Arduino, audio) stay unknown until they
 connect, and are where `expects` earns its place.
 
@@ -1074,7 +1126,7 @@ Software this package builds on:
 
 | Project | Used by |
 |---|---|
-| [muse-js](https://github.com/urish/muse-js) | `MuseReceiver` — Bluetooth GATT over Web Bluetooth |
+| [muse-jsx](https://github.com/fuji3to4/muse-jsx) | `MuseReceiver` — Bluetooth GATT over Web Bluetooth |
 | [Cortex API](https://emotiv.gitbook.io/cortex-api) | `EMOTIVReceiver` — proprietary, needs EMOTIV's local software |
 | [MediaPipe Tasks](https://ai.google.dev/edge/mediapipe) | `FaceLandmarkReceiver`, `PoseReceiver`, `RPPGReceiver` |
 | [face-api.js](https://github.com/justadudewhohacks/face-api.js) | `FaceEmotionReceiver`, via the maintained [`@vladmandic` fork](https://github.com/vladmandic/face-api) |

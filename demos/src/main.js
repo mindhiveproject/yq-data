@@ -111,7 +111,7 @@ const recorder = new Recorder();
 /**
  * Two independent branches off one headset: EEG through band power, and PPG
  * through heart rate. The graph below is exactly the JSON a stored data
- * source block would hold.
+ * source block would hold, and every generation of Muse runs the same one.
  */
 const musePipeline = new Pipeline({
   nodes: [
@@ -132,8 +132,9 @@ const musePipeline = new Pipeline({
     {
       id: "ppg-channel",
       method: AnalysisMethod.CHANNEL_SELECTION,
-      // The infrared channel carries the pulse; ambient and red do not.
-      parameters: { labels: ["infrared"] },
+      // The channel carrying the pulse: "infrared" on a Muse 2 or classic S,
+      // "LI_RED" on an Athena. A label the stream does not have is skipped.
+      parameters: { labels: ["infrared", "LI_RED"] },
     },
     {
       id: "ppg-window",
@@ -158,13 +159,16 @@ const renderMuse = makeRenderer("muse-output");
 document.getElementById("muse-connect").addEventListener("click", async () => {
   try {
     await muse.connect();
-    await muse.startStream();
 
     musePipeline.attachReceiver("muse", muse);
     musePipeline.start();
     musePipeline.data.subscribe(renderMuse);
 
     recorder.addReceiver(muse);
+
+    // Last, because an Athena only returns from this seconds after its data
+    // has started flowing.
+    await muse.startStream();
 
     toggle("muse-connect", true);
     toggle("muse-disconnect", false);
