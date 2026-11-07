@@ -1,6 +1,6 @@
 {
   "name": "yq-data",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Package to capture, record, and stream data from multiple devices to the web browser",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
