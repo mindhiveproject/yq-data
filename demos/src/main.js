@@ -2,6 +2,7 @@ import "./style.css";
 import {
   AnalysisMethod,
   ArduinoReceiver,
+  BluetoothTransport,
   EMOTIVReceiver,
   FaceEmotionReceiver,
   FaceLandmarkReceiver,
@@ -572,6 +573,7 @@ function buildSinkControls() {
 function setArduinoState(state) {
   const idle = state === "idle";
   toggle("arduino-connect", !idle);
+  toggle("arduino-bluetooth", !idle);
   toggle("arduino-simulate", !idle);
   toggle("arduino-baud", !idle);
   toggle("arduino-ping", state !== "connected");
@@ -583,7 +585,9 @@ async function startArduino(transport, simulated) {
   setArduinoState("connecting");
   output.textContent = simulated
     ? "Starting the simulated board…"
-    : "Waiting for the board. Opening the port resets most boards, which takes a second or two…";
+    : transport.kind === "bluetooth"
+      ? "Connecting to the board…"
+      : "Waiting for the board. Opening the port resets most boards, which takes a second or two…";
 
   const board = new ArduinoReceiver(transport);
   try {
@@ -646,6 +650,15 @@ document.getElementById("arduino-connect").addEventListener("click", async () =>
       baudRate: Number(document.getElementById("arduino-baud").value) || 115200,
     });
     await startArduino(transport);
+  } catch (error) {
+    setArduinoState("idle");
+    fail("arduino-output", error);
+  }
+});
+
+document.getElementById("arduino-bluetooth").addEventListener("click", async () => {
+  try {
+    await startArduino(await BluetoothTransport.request());
   } catch (error) {
     setArduinoState("idle");
     fail("arduino-output", error);
