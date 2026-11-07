@@ -140,6 +140,10 @@ export class RemoteStreamReceiver extends BaseReceiver {
       throw error;
     }
 
+    // A link that dropped leaves these behind, and it may be the same transport.
+    this.messageUnsub?.();
+    this.openSub?.unsubscribe();
+
     this.messageUnsub = this.transport.onMessage((value) => this.ingest(value));
     this.openSub = this.transport.isOpen$.subscribe((open) => {
       // Mirror the transport's liveness, but never flip back to connected on

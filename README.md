@@ -100,7 +100,7 @@ A receiver owns a connection to one source and publishes packets.
 | `MuseReceiver` | Muse 2, classic Muse S, [Muse S Athena](#muse-s-athena) | Web Bluetooth. Raw EEG at 256 Hz, PPG at 64 Hz; motion at 52 Hz on an Athena |
 | `EMOTIVReceiver` | EMOTIV headsets | Cortex API over WebSocket; needs credentials |
 | `LSLReceiver` | Lab Streaming Layer | Via a [WebSocket relay](#lab-streaming-layer); reads the `lsl` protocol; auto-reconnects |
-| `ArduinoReceiver` | Arduino, ESP32, other [microcontrollers](#microcontrollers) | Web Serial. The board announces its own streams; also writes to the board |
+| `ArduinoReceiver` | Arduino, ESP32, other [microcontrollers](#microcontrollers) | Web Serial or Web Bluetooth. The board announces its own streams; also writes to the board |
 | `MicrophoneReceiver` | Microphone | AudioWorklet; raw interleaved PCM |
 | `VideoReceiver` | Camera | Lifecycle handle only — emits no packets |
 | `FaceLandmarkReceiver` | Camera | 52 expression scores (`blendshapes`), head pose; opt-in face box and 478 landmarks |
@@ -370,10 +370,10 @@ downstream from one calling `mark()` in the page.
 
 ### Microcontrollers
 
-`ArduinoReceiver` talks to a board running the yq-data Arduino library over a
-serial port. There is nothing to configure on this side: the board announces
-its streams — names, modalities, channel layouts, rates, scales — and they
-appear as ordinary yq-data streams.
+`ArduinoReceiver` talks to a board running the yq-data Arduino library, over a
+serial port or Bluetooth Low Energy. There is nothing to configure on this side:
+the board announces its streams — names, modalities, channel layouts, rates,
+scales — and they appear as ordinary yq-data streams.
 
 ```ts
 const transport = await SerialTransport.request({ baudRate: 115200 });
@@ -386,6 +386,41 @@ board.data.subscribe((packet) => ...);
 `SerialTransport.request()` shows the browser's port picker and needs a click
 handler. A port the user has granted before reopens without one through
 `SerialTransport.granted()`. Chromium browsers only, like the Muse.
+
+Over Bluetooth Low Energy, only the transport changes:
+
+```ts
+const transport = await BluetoothTransport.request();
+const board = new ArduinoReceiver(transport);
+await board.connect();
+board.startStream();
+```
+
+`request()` shows the browser's chooser, and needs a click handler too. It lists
+every device on the Nordic UART Service, which is what `YQBleStream` on an ESP32
+and a Bluefruit module both use. Other products use it as well, so narrow the list
+if you need to: `{ filters: [{ namePrefix: "YQ" }] }` or
+`{ exclusionFilters: [{ namePrefix: "EmotiBit" }] }`. Another UART only needs its
+UUIDs: an HM-10 is `{ service: 0xffe0, rx: 0xffe1, tx: 0xffe1 }`.
+
+Three things differ from a cable:
+
+- **Speed.** A web page can neither set nor read the link's MTU. Notifications from
+  the board fill whatever was negotiated, but writes from the app stay at 20 bytes
+  each unless you set `chunkSize`. Frames that would queue more than
+  `maxQueuedBytes` (default 1024) are dropped whole and counted in
+  `transport.stats.queueDropped`, so a sink written faster than the link carries
+  lags by a bounded amount.
+- **Losing the link.** Connections drop, and `transport.isOpen$` tells you. There is
+  no automatic reconnect, but no chooser is needed either: calling
+  `board.connect()` and `board.startStream()` again is enough. After
+  `board.disconnect()`, which closes the transport, use
+  `new BluetoothTransport(transport.device)`.
+- **No reset.** Connecting does not reset the board, so `hello` is what returns it
+  to idle.
+
+This has run against the library compiled with a mock radio, not yet on a real
+board or through a real browser's Bluetooth stack.
 
 A board can also *receive* — an LED, a motor, a servo. Those streams are its
 **sinks**, and you write to them in physical units:
@@ -918,6 +953,7 @@ A `Transport` is a bidirectional channel for values — `send`, `onMessage`,
 | `BroadcastChannelTransport` | Same-origin contexts | Structured clone; one producer fans out to every tab on the channel name |
 | `WebSocketTransport` | A server or another machine | Encodes values through a `WireCodec`; owns reconnection, which `LSLReceiver` uses |
 | `SerialTransport` | A microcontroller on a serial port | Web Serial. A byte stream, so it frames (COBS and a CRC-16) and encodes MessagePack; no auto-reconnect, since reopening resets the board. See [microcontrollers](#microcontrollers) |
+| `BluetoothTransport` | A device on a Bluetooth Low Energy UART | Web Bluetooth. Framed like `SerialTransport` by default; a device with its own format passes `framing` and `codec`. Nordic UART by default, other UUIDs configurable; no auto-reconnect. See [microcontrollers](#microcontrollers) |
 
 Structured-clone transports need **no codec** — the packet is the message.
 `WebSocketTransport` puts every value through a `WireCodec` (JSON by default; a
@@ -932,8 +968,8 @@ named on its own axis, so the names never compete:
 
 | Layer | Named after | Examples |
 |---|---|---|
-| Transport | the mechanism | `WebSocketTransport`, `SerialTransport`, `PostMessageTransport` |
-| Codec | the format | `jsonCodec`, `msgpackCodec` |
+| Transport | the mechanism | `WebSocketTransport`, `SerialTransport`, `BluetoothTransport`, `PostMessageTransport` |
+| Codec | the format | `jsonCodec`, `msgpackCodec`, `textCodec` |
 | Protocol | who is on the other end | `yq-stream` (another yq-data peer), `yq-arduino` (a board), `lsl` (an LSL relay) |
 
 Any protocol runs over any transport that suits it — yq-stream over a WebSocket
@@ -1168,7 +1204,9 @@ TensorFlow.js in `tests/unit/ml5_model.test.ts`.
 Everything runs in a single document — no popup windows are needed for any
 source. All of it requires a secure context (`https://` or `localhost`):
 
-- **Web Bluetooth** (Muse) — Chrome, Edge, Opera. Not Safari or Firefox.
+- **Web Bluetooth** (Muse, `BluetoothTransport`) — Chrome, Edge, Opera. Not Safari
+  or Firefox.
+- **Web Serial** (`SerialTransport`) — Chrome, Edge, Opera. Not Safari or Firefox.
 - **getUserMedia** (camera, microphone) — all modern browsers.
 - **AudioWorklet** (microphone) — all modern browsers.
 - **EMOTIV** additionally needs the Cortex service running locally, and its

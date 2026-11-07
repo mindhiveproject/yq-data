@@ -13,3 +13,6 @@
 # Downloads for the golden-value generator (datasets, reference MATLAB)
 /tests/unit/golden/.cache/
 tests/.DS_Store
+
+# Docs live in Notion
+/docs/

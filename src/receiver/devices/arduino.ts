@@ -35,6 +35,7 @@ export interface ArduinoOptions
  *
  * ```ts
  * const transport = await SerialTransport.request();
+ * // or: await BluetoothTransport.request();
  * const board = new ArduinoReceiver(transport);
  * await board.connect();          // runs the handshake
  * board.startStream();
@@ -224,7 +225,8 @@ export class ArduinoReceiver extends RemoteStreamReceiver {
           finish(
             new Error(
               `The board did not describe itself within ${this.handshakeTimeout} ms. ` +
-                "Check the baud rate and that the sketch calls the library's poll()."
+                "Check that it runs the yq-arduino library and calls poll(), and on " +
+                "a serial port, the baud rate."
             )
           ),
         this.handshakeTimeout

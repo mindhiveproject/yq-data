@@ -1,11 +1,11 @@
 import { BaseTransport, WireCodec } from "./transport";
 import { LoadableCodec, msgpackCodec } from "./msgpack";
 import {
-  FRAME_DELIMITER,
-  FrameDecoder,
+  Deframer,
   FrameStats,
+  Framing,
   MAX_DECODED_FRAME,
-  encodeFrame,
+  cobsFraming,
 } from "./framing";
 
 export interface ByteTransportOptions {
@@ -16,6 +16,11 @@ export interface ByteTransportOptions {
   codec?: WireCodec | LoadableCodec;
   /** Largest `body ‖ crc` this link carries. Default and ceiling: 254. */
   maxFrame?: number;
+  /**
+   * How messages are marked on the pipe. Defaults to COBS and a CRC, the
+   * `yq-arduino` framing, limited by `maxFrame`.
+   */
+  framing?: Framing;
 }
 
 function isLoadable(codec: WireCodec): codec is LoadableCodec {
@@ -35,10 +40,11 @@ function toBytes(encoded: ReturnType<WireCodec["encode"]>): Uint8Array {
  * A transport over a raw byte pipe — a serial port, a BLE UART.
  *
  * Unlike a WebSocket, the pipe has no message boundaries, so this owns the
- * framing: outgoing values go through the codec, get a CRC and COBS, and leave
- * as one delimited frame; incoming bytes are cut into frames, checked, decoded
- * and delivered to listeners as plain values. A concrete transport supplies
- * only `write()`, and calls `feed()` with whatever arrives.
+ * framing: outgoing values go through the codec, get framed (by default with a
+ * CRC and COBS), and leave as one delimited frame; incoming bytes are cut into
+ * frames, checked, decoded and delivered to listeners as plain values. A
+ * concrete transport supplies only `write()`, and calls `feed()` with whatever
+ * arrives.
  *
  * `structuredClone` is `false`: the far end — usually a microcontroller — has
  * its own clock.
@@ -47,15 +53,17 @@ export abstract class ByteTransport extends BaseTransport {
   readonly structuredClone = false;
 
   protected readonly codec: WireCodec | LoadableCodec;
-  private readonly maxFrame: number;
-  private readonly deframer: FrameDecoder;
+  private readonly framing: Framing;
+  private readonly deframer: Deframer;
   private oversize = 0;
 
   constructor(options: ByteTransportOptions = {}) {
     super();
     this.codec = options.codec ?? msgpackCodec;
-    this.maxFrame = Math.min(options.maxFrame ?? MAX_DECODED_FRAME, MAX_DECODED_FRAME);
-    this.deframer = new FrameDecoder((body) => this.deliver(body), this.maxFrame);
+    this.framing =
+      options.framing ??
+      cobsFraming(Math.min(options.maxFrame ?? MAX_DECODED_FRAME, MAX_DECODED_FRAME));
+    this.deframer = this.framing.decoder((body) => this.deliver(body));
   }
 
   /** Bytes, frames and drops since this transport was created. */
@@ -72,13 +80,14 @@ export abstract class ByteTransport extends BaseTransport {
   }
 
   /**
-   * Marks the link open and flushes it with a lone delimiter, so whatever
-   * half-frame the far end was holding is discarded instead of glued to ours.
+   * Marks the link open and flushes it (with a lone delimiter, in COBS), so
+   * whatever half-frame the far end was holding is discarded instead of glued
+   * to ours.
    */
   protected markOpen(): void {
     this.deframer.reset();
     this.setOpen(true);
-    void this.write(Uint8Array.of(FRAME_DELIMITER));
+    if (this.framing.flush) void this.write(this.framing.flush);
   }
 
   /** Hands bytes from the pipe to the deframer. */
@@ -91,7 +100,7 @@ export abstract class ByteTransport extends BaseTransport {
 
     let frame: Uint8Array;
     try {
-      frame = encodeFrame(toBytes(this.codec.encode(value)), this.maxFrame);
+      frame = this.framing.encode(toBytes(this.codec.encode(value)));
     } catch (error) {
       // An unencodable or oversize message is the caller's bug, but it must not
       // take down the stream that triggered it.

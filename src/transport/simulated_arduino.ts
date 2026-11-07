@@ -6,8 +6,9 @@
  * sources — written against the same framing and MessagePack as the real thing.
  * It does two jobs:
  *
- * - **Tests.** {@link SimulatedArduino.port} is a {@link SerialPortLike}, so the
- *   whole receive path (`SerialTransport` → framing → `ArduinoProtocol` →
+ * - **Tests.** {@link SimulatedArduino.port} is a {@link SerialPortLike} and
+ *   {@link SimulatedArduino.device} a Bluetooth device, so the whole receive path
+ *   (`SerialTransport` or `BluetoothTransport` → framing → `ArduinoProtocol` →
  *   `ArduinoReceiver`) runs under Jest with no hardware.
  * - **A readable reference** for what the Arduino library has to do, in the
  *   same language as the rest of the package.
@@ -33,6 +34,10 @@ import {
 } from "./framing";
 import { loadMsgpack, msgpackCodec } from "./msgpack";
 import { SerialPortLike } from "./serial";
+import {
+  SimulatedBluetoothDevice,
+  SimulatedBluetoothOptions,
+} from "./simulated_bluetooth";
 import {
   ARDUINO_MESSAGE,
   ARDUINO_PROTOCOL_VERSION,
@@ -87,6 +92,8 @@ export interface SimulatedArduinoOptions {
   protocolVersion?: number;
   /** Set `false` to make a board that never answers `hello`. */
   answerHello?: boolean;
+  /** How {@link SimulatedArduino.device} looks. Default: a Nordic UART at MTU 23. */
+  bluetooth?: SimulatedBluetoothOptions;
 }
 
 /** One `data` message the board received for a sink. */
@@ -221,6 +228,8 @@ interface ResolvedStream {
 export class SimulatedArduino {
   /** Hand this to `new SerialTransport(...)`. */
   readonly port = new SimulatedSerialPort();
+  /** Or this to `new BluetoothTransport(...)`. */
+  readonly device: SimulatedBluetoothDevice;
 
   /** Whether the app has sent `start` and not `stop`. */
   streaming = false;
@@ -260,6 +269,17 @@ export class SimulatedArduino {
     this.port.onClose = () => {
       clearTimeout(this.bootTimer);
       this.booting = false;
+    };
+
+    // Connecting over Bluetooth does not reset a board, so one may still be
+    // streaming when the app arrives. Losing the link is what returns it to idle,
+    // as in the library's Esp32Ble example.
+    this.device = new SimulatedBluetoothDevice(options.bluetooth);
+    this.device.onWrite = (bytes) => this.deframer.feed(bytes);
+    this.device.onOpen = () => this.deframer.reset();
+    this.device.onClose = () => {
+      this.streaming = false;
+      this.deframer.reset();
     };
   }
 
@@ -307,11 +327,13 @@ export class SimulatedArduino {
   /** Bytes the board sends that are not a frame: line noise. */
   noise(bytes: Uint8Array): void {
     this.port.push(bytes);
+    this.device.push(bytes);
   }
 
-  /** Simulates the cable being pulled. */
+  /** Simulates the cable being pulled, or the Bluetooth link being lost. */
   unplug(): void {
     this.port.unplug();
+    this.device.drop();
   }
 
   /** The board clock, in its time unit, wrapped to 32 bits. */
@@ -343,7 +365,9 @@ export class SimulatedArduino {
   }
 
   private send(message: unknown[]): void {
-    this.port.push(encodeFrame(msgpackCodec.encode(message) as Uint8Array));
+    const frame = encodeFrame(msgpackCodec.encode(message) as Uint8Array);
+    this.port.push(frame);
+    this.device.push(frame);
   }
 
   private handleBody(body: Uint8Array): void {

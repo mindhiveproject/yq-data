@@ -1,13 +1,15 @@
 /**
- * Byte-level framing for `yq-arduino`: COBS, CRC-16, and a stream deframer.
+ * Byte-level framing: where one message ends on a link that has no boundaries.
  *
- * A serial port or a BLE UART is a stream of bytes with no message boundaries,
- * so each message is wrapped as `COBS(body ‖ crc16) ‖ 0x00`. COBS guarantees
+ * A serial port or a BLE UART is a stream of bytes, so a {@link Framing} has to
+ * mark them. There are two here. {@link cobsFraming} is the one `yq-arduino`
+ * uses: each message is wrapped as `COBS(body ‖ crc16) ‖ 0x00`. COBS guarantees
  * `0x00` never occurs inside a frame, so a receiver that loses its place —
  * noise, a half-sent frame, a board that reset mid-message — resynchronises at
- * the next delimiter. The CRC catches the rest.
+ * the next delimiter. The CRC catches the rest. {@link lineFraming} is for
+ * devices that send lines of text, such as an EmotiBit.
  *
- * These are pure functions over bytes. `protocol/vectors.json` pins their
+ * These are pure functions over bytes. `protocol/vectors.json` pins the COBS
  * output, and the Arduino library is tested against the same file.
  */
 
@@ -149,6 +151,27 @@ export interface FrameStats {
   dropped: Record<FrameDropReason, number>;
 }
 
+/** Cuts a byte stream into message bodies. One per link. */
+export interface Deframer {
+  readonly stats: FrameStats;
+  /** Takes whatever chunks the pipe produces, however they fall. */
+  feed(chunk: Uint8Array): void;
+  /** Forgets any half-received frame. */
+  reset(): void;
+  /** Counts a frame whose body passed the frame layer but not the message layer. */
+  noteDecodeFailure(): void;
+}
+
+/** How a byte link marks where each message ends. */
+export interface Framing {
+  /** Wraps a message body as bytes to send. Throws if it cannot be carried. */
+  encode(body: Uint8Array): Uint8Array;
+  /** A new deframer, which hands each body it finds to `onFrame`. */
+  decoder(onFrame: (body: Uint8Array) => void): Deframer;
+  /** Sent on opening a link, so the far end drops any half-frame it holds. */
+  readonly flush?: Uint8Array;
+}
+
 /**
  * Cuts a byte stream into frames and checks each one.
  *
@@ -157,7 +180,7 @@ export interface FrameStats {
  * handed to `onFrame`. Anything else is dropped and counted, never thrown: a
  * noisy link should lose frames, not crash the page.
  */
-export class FrameDecoder {
+export class FrameDecoder implements Deframer {
   readonly stats: FrameStats = {
     bytes: 0,
     frames: 0,
@@ -245,4 +268,110 @@ export class FrameDecoder {
     // Copy: the decoder reuses nothing, but a caller may hold the body.
     this.onFrame(decoded.slice(0, bodyLength));
   }
+}
+
+/**
+ * The `yq-arduino` framing: {@link encodeFrame} out, {@link FrameDecoder} in.
+ *
+ * @param maxDecoded - Largest `body ‖ crc` this link carries.
+ */
+export function cobsFraming(maxDecoded: number = MAX_DECODED_FRAME): Framing {
+  return {
+    encode: (body) => encodeFrame(body, maxDecoded),
+    decoder: (onFrame) => new FrameDecoder(onFrame, maxDecoded),
+    flush: Uint8Array.of(FRAME_DELIMITER),
+  };
+}
+
+const LINE_FEED = 0x0a;
+const CARRIAGE_RETURN = 0x0d;
+
+/**
+ * Cuts a byte stream into lines. A trailing `\r` is removed and empty lines are
+ * ignored. A line longer than the buffer is dropped through its line feed.
+ *
+ * Lines carry no checksum, so a line that was damaged or cut short is still
+ * delivered, and it is up to the protocol to notice.
+ */
+class LineDecoder implements Deframer {
+  readonly stats: FrameStats = {
+    bytes: 0,
+    frames: 0,
+    dropped: { length: 0, cobs: 0, crc: 0, decode: 0 },
+  };
+
+  private readonly buffer: Uint8Array;
+  private length = 0;
+  private overflowed = false;
+
+  constructor(
+    private readonly onFrame: (body: Uint8Array) => void,
+    maxLine: number
+  ) {
+    this.buffer = new Uint8Array(maxLine);
+  }
+
+  noteDecodeFailure(): void {
+    this.stats.dropped.decode++;
+  }
+
+  feed(chunk: Uint8Array): void {
+    this.stats.bytes += chunk.length;
+
+    for (let i = 0; i < chunk.length; i++) {
+      const byte = chunk[i];
+
+      if (byte === LINE_FEED) {
+        this.finishLine();
+      } else if (this.length >= this.buffer.length) {
+        this.overflowed = true;
+      } else {
+        this.buffer[this.length++] = byte;
+      }
+    }
+  }
+
+  reset(): void {
+    this.length = 0;
+    this.overflowed = false;
+  }
+
+  private finishLine(): void {
+    let length = this.length;
+    const overflowed = this.overflowed;
+    this.reset();
+
+    if (overflowed) {
+      this.stats.dropped.length++;
+      return;
+    }
+
+    if (length > 0 && this.buffer[length - 1] === CARRIAGE_RETURN) length--;
+    if (length === 0) return;
+
+    this.stats.frames++;
+    this.onFrame(this.buffer.slice(0, length));
+  }
+}
+
+/**
+ * Framing for a device that sends lines of text: each message ends in `\n`.
+ *
+ * Pair it with {@link import("./transport").textCodec}, so messages are strings.
+ *
+ * @param maxLine - Longest line accepted, in bytes. Default 4096.
+ */
+export function lineFraming(maxLine: number = 4096): Framing {
+  return {
+    encode(body) {
+      if (body.includes(LINE_FEED)) {
+        throw new RangeError("A line cannot contain a line feed.");
+      }
+      const line = new Uint8Array(body.length + 1);
+      line.set(body);
+      line[body.length] = LINE_FEED;
+      return line;
+    },
+    decoder: (onFrame) => new LineDecoder(onFrame, maxLine),
+  };
 }

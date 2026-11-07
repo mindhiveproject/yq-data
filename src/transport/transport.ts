@@ -17,13 +17,16 @@ import type { Protocol } from "./protocol";
  *   back on the way in.
  * - `"serial"` — a Web Serial port. A byte stream, so it also owns the framing
  *   (COBS and a CRC) around each message, and a codec (MessagePack).
+ * - `"bluetooth"` — a Bluetooth Low Energy UART, through Web Bluetooth. The same
+ *   as `"serial"`, on a byte pipe that arrives in small notifications.
  */
 export type TransportKind =
   | "memory"
   | "postMessage"
   | "broadcastChannel"
   | "websocket"
-  | "serial";
+  | "serial"
+  | "bluetooth";
 
 /**
  * A bidirectional channel for values, with no knowledge of what they mean.
@@ -148,6 +151,17 @@ export interface WireCodec {
   encode(value: unknown): string | ArrayBufferLike | ArrayBufferView;
   decode(data: unknown): unknown;
 }
+
+/** Text codec: a string out as UTF-8, and UTF-8 back in as a string. */
+export const textCodec: WireCodec = {
+  encode(value: unknown): string {
+    return String(value);
+  },
+  decode(data: unknown): unknown {
+    if (typeof data === "string") return data;
+    return new TextDecoder().decode(data as ArrayBufferView);
+  },
+};
 
 /** JSON codec: `JSON.stringify` out, `JSON.parse` in. */
 export const jsonCodec: WireCodec = {

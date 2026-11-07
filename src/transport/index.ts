@@ -7,7 +7,7 @@
  * of one and speak a {@link Protocol}: `yq-stream` by default, `yq-arduino`
  * with a board. See `protocol.ts` for how the layers are named.
  */
-export { BaseTransport, jsonCodec } from "./transport";
+export { BaseTransport, jsonCodec, textCodec } from "./transport";
 export type { Transport, TransportKind, WireCodec } from "./transport";
 
 export { MemoryTransport } from "./memory";
@@ -64,8 +64,10 @@ export {
   cobsDecode,
   encodeFrame,
   FrameDecoder,
+  cobsFraming,
+  lineFraming,
 } from "./framing";
-export type { FrameStats, FrameDropReason } from "./framing";
+export type { Deframer, Framing, FrameStats, FrameDropReason } from "./framing";
 export { msgpackCodec, loadMsgpack } from "./msgpack";
 export type { LoadableCodec } from "./msgpack";
 export { ByteTransport } from "./byte_transport";
@@ -77,6 +79,25 @@ export type {
   SerialTransportOptions,
   SerialRequestOptions,
 } from "./serial";
+export {
+  BluetoothTransport,
+  NORDIC_UART_SERVICE,
+  NORDIC_UART_RX,
+  NORDIC_UART_TX,
+} from "./bluetooth";
+export type {
+  BluetoothUUID,
+  BluetoothLike,
+  BluetoothDeviceLike,
+  BluetoothServerLike,
+  BluetoothServiceLike,
+  BluetoothCharacteristicLike,
+  BluetoothDeviceFilter,
+  BluetoothRequestDeviceOptions,
+  BluetoothTransportOptions,
+  BluetoothRequestOptions,
+  BluetoothStats,
+} from "./bluetooth";
 export {
   ARDUINO_PROTOCOL,
   ARDUINO_PROTOCOL_VERSION,
@@ -92,6 +113,8 @@ export type {
   SampleFormatSpec,
   SinkRoute,
 } from "./arduino_protocol";
+export { SimulatedBluetoothDevice } from "./simulated_bluetooth";
+export type { SimulatedBluetoothOptions, SimulatedWrite } from "./simulated_bluetooth";
 export { SimulatedArduino, SimulatedSerialPort } from "./simulated_arduino";
 export type {
   SimulatedArduinoOptions,
