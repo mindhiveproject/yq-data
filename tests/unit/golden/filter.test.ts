@@ -96,8 +96,8 @@ describe("golden: Butterworth design vs scipy.signal.butter", () => {
     const edges = Array.isArray(c.cutoff) ? c.cutoff : [c.cutoff];
     const atEdges = edges.map((f) => toDb(actual[c.frequencies.indexOf(f)]));
     // A Butterworth filter of any order and type is -3.0103 dB (1/sqrt 2) at
-    // each cutoff by definition. The old RBJ band design missed this by 3 dB
-    // per section (D1, closed).
+    // each cutoff by definition. A cascade of RBJ cookbook biquads misses this
+    // by 3 dB per section.
     expect(atEdges).toBeAllClose(edges.map(() => -3.0103), { rtol: 0, atol: 0.001 });
   });
 });
@@ -153,7 +153,7 @@ describe("golden: zero-phase filtering vs scipy.signal.filtfilt", () => {
 
     // Odd padding alone leaves the start-up transient in the result; SciPy
     // also seeds each pass with the step-response steady state (lfilter_zi;
-    // cf. Gustafsson 1996), and so does filtfilt. Closed D6.
+    // cf. Gustafsson 1996), and so does filtfilt.
     it("edges match scipy.signal.filtfilt", () => {
       expect(maxAbsDiff(y, c.scipy)).toBeLessThan(1e-6 * scale);
     });

@@ -67,8 +67,8 @@ describe("golden: window functions vs scipy.signal.windows (sym=True)", () => {
   });
 
   // A one-sample window is degenerate, but SciPy (and NumPy) define it as
-  // [1.0]. Was divergence D10 (the cosine formula at phase 0 gave 0.08 for
-  // Hamming and 0 for Hann/Blackman).
+  // [1.0], not the cosine formula at phase 0 (which gives 0.08 for Hamming and
+  // 0 for Hann/Blackman).
   it("N = 1 is the identity window, as in SciPy", () => {
     for (const c of windows.cases.filter((w) => w.length === 1)) {
       expect(Array.from(getWindow(c.type, 1))).toBeAllClose(c.symmetric, { rtol: 1e-6 });
@@ -134,9 +134,8 @@ describe("golden: amplitude spectrum recovers sinusoid amplitude (Heinzel 2002)"
   });
 
   // Normalizing by sum(w) rather than by nfft is what makes this hold for a
-  // tapered window. Was divergence D3: dividing by nfft read every bin low by
-  // the coherent gain (0.54 Hamming, 0.5 Hann), and by len/nfft more when
-  // zero padded.
+  // tapered window: dividing by nfft would read every bin low by the coherent
+  // gain (0.54 Hamming, 0.5 Hann), and by len/nfft more when zero padded.
   for (const window of ["hamming", "hann"] as const) {
     it(`${window} window: magnitude reads the true amplitude`, () => {
       const value = read(window);

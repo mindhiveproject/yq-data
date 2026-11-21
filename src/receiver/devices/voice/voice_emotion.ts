@@ -1,7 +1,7 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
 import { BaseReceiver } from "../../base_receiver";
 import { ML5Classifier } from "./ml5_model";
-import { version } from "../../../../package.json";
+import { name, version } from "../../../../package.json";
 
 /**
  * Where the emotion classifier's weights are fetched from: this version of the
@@ -12,7 +12,7 @@ import { version } from "../../../../package.json";
  * application that never touches voice never loads it. Pass `modelPath` to
  * serve it yourself.
  */
-export const DEFAULT_VOICE_EMOTION_MODEL = `https://cdn.jsdelivr.net/npm/yq-data@${version}/models/voice-emotion`;
+export const DEFAULT_VOICE_EMOTION_MODEL = `https://cdn.jsdelivr.net/npm/${name}@${version}/models/voice-emotion`;
 
 /**
  * Feature extractor settings passed through to formantanalyzer.

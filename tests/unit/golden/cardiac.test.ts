@@ -257,10 +257,9 @@ describe("golden: beat detection vs ground truth (Charlton 2022 scoring)", () =>
     expect(scores.package.f1).toBeGreaterThanOrEqual(scores.msptdfastMatlab.f1 - 1e-12);
   });
 
-  // D7, closed: the adaptive-threshold detector recorded falling edges at
-  // window starts as beats. MSPTDfast reports a sample only when it is a
-  // maximum at every scale up to the dominant one, which a window edge
-  // cannot be.
+  // An adaptive-threshold detector records falling edges at window starts as
+  // beats. MSPTDfast reports a sample only when it is a maximum at every scale
+  // up to the dominant one, which a window edge cannot be.
   it.each(results.filter((r) => !r.c.real))("$c.signal: no false beats (PPV 1)", ({ scores }) => {
     expect(scores.package.ppv).toBe(1);
   });
@@ -343,9 +342,9 @@ describe("golden: HeartRate node vs the true rate, per 10 s window", () => {
 
   // SDNN / RMSSD are defined on normal-to-normal intervals (Task Force 1996),
   // so every interval the node passes on must span two consecutive true
-  // beats: no false beat splitting one, no missed beat merging two. D7,
-  // closed: the adaptive-threshold detector's edge false beats broke this and
-  // inflated SDNN up to 3.5x.
+  // beats: no false beat splitting one, no missed beat merging two. False
+  // beats at window edges (the adaptive-threshold detector's failure) break
+  // this and inflate SDNN up to 3.5x.
   it.each(synthetic)(`${label}: every interval HRV uses spans two consecutive true beats`, (w) => {
     const tolerance = Math.round(golden.matchToleranceSeconds * w.fs);
     const beats = detectors.msptdfast(pulseOf(windowSignal(w.signal, w.start, w.stop), w.fs), w.fs);

@@ -75,11 +75,11 @@ describe("golden: RMS vs NumPy", () => {
     expect(golden.generatedBy.python).toMatch(/^\d+\.\d+/);
   });
 
-  // Convention, pinned rather than flagged: dbfs() references RMS to 1.0, so
+  // Convention: dbfs() references RMS to 1.0, so
   // a full-scale sine reads 20*log10(1/sqrt(2)) = -3.01 dBFS. AES17 defines
   // dBFS so that the same sine reads 0 dBFS (a full-scale square then reads
   // +3.01). Both are in use -- Audacity and Smaart follow the package's --
-  // so this only needs to be stated where dBFS is shown. Convention C3.
+  // so this only needs to be stated where dBFS is shown.
   it("full-scale sine reads -3.01 dBFS (AES17 would read 0 dBFS)", () => {
     const tone = golden.cases.find((c) => c.signal === "aes17_full_scale_997hz")!;
     const result = new RMSAnalyzer({ decibels: true }).analyze(packetFor(tone.signal));

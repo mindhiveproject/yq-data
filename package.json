@@ -1,6 +1,6 @@
 {
-  "name": "yq-data",
-  "version": "1.0.1",
+  "name": "@mindhive_science/yq-data",
+  "version": "1.0.2",
   "description": "Package to capture, record, and stream data from multiple devices to the web browser",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -52,6 +52,9 @@
     "dist",
     "models"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "muse-jsx": "^0.3.1",
     "rxjs": "^7.8.1"

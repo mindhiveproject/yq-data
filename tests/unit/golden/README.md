@@ -15,18 +15,14 @@ libraries the field already trusts, and says so precisely where it does not.
   true rate). A real PPG recording is labelled from the ECG recorded with it.
   These are judged against stated, justified tolerances.
 
-**Results** live in two places. The tests are the live record: run
-`npm run golden` to see every case by name. The history of divergences from the
-references (D1–D10, all closed) and the documented conventions (C1–C6) is in
-the *Open Gaps* section of the package spec in Notion, under *Golden-value
-divergences*. Comments in the tests say "Was D8" and so on where a gap was
-closed. The literature and libraries the references come
-from are listed under [References](#references) below.
+**Results** are the tests themselves: run `npm run golden` to see every case
+by name. The literature and libraries the references come from are listed
+under [References](#references) below.
 
 The reference values are computed **offline in Python** and committed as JSON.
 Jest never runs Python: it loads the fixtures and compares. Nothing here ships
-in the npm package. `package.json` publishes `dist/` only, so this whole
-directory is repo-only.
+in the npm package. `package.json` publishes only `dist/` and `models/`, so this
+whole directory is repo-only.
 
 ## Layout
 
@@ -107,8 +103,7 @@ deterministic: two runs produce byte-identical fixtures.
    assertion and a comment saying *why* that value.
 6. Start the tolerance loose (`rtol 1e-3`), then tighten. If it won't tighten,
    you've found a convention mismatch. Document it rather than widening the
-   tolerance to hide it. If it is a real gap, record it in the spec's Open
-   Gaps list with the next D-number, and either fix it or leave the test out
+   tolerance to hide it. If it is a real gap, fix it, or leave the test out
    until it is fixed.
 
 ## Tolerance notes
@@ -168,13 +163,12 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
 
 - Harris, F.J. (1978). On the use of windows for harmonic analysis with the
   discrete Fourier transform. *Proc IEEE* 66(1):51–83.
-  doi:10.1109/PROC.1978.10837. Symmetric vs periodic windows (C1).
+  doi:10.1109/PROC.1978.10837. Symmetric vs periodic windows.
 - Heinzel, G., Rüdiger, A. & Schilling, R. (2002). *Spectrum and spectral
   density estimation by the Discrete Fourier transform (DFT), including a
   comprehensive list of window functions and some new flat-top windows.*
   Max-Planck-Institut für Gravitationsphysik.
-  https://holometer.fnal.gov/GH_FFT.pdf. Amplitude vs density normalisation
-  (D3, D4).
+  https://holometer.fnal.gov/GH_FFT.pdf. Amplitude vs density normalisation.
 - Welch, P. (1967). The use of fast Fourier transform for the estimation of
   power spectra. *IEEE Trans Audio Electroacoust* 15(2):70–73.
   doi:10.1109/TAU.1967.1161901.
@@ -183,8 +177,7 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
 
 - Butterworth, S. (1930). On the theory of filter amplifiers. *Wireless
   Engineer* 7:536–541. The maximally flat response `butter` realises; SciPy's
-  `buttap` → `lp2*_zpk` → `bilinear_zpk` → `zpk2sos` is the design path ported
-  (D1, closed).
+  `buttap` → `lp2*_zpk` → `bilinear_zpk` → `zpk2sos` is the design path ported.
 - Harris, F.J. (1978). On the use of windows for harmonic analysis with the
   discrete Fourier transform. *Proc IEEE* 66:51–83. doi:10.1109/PROC.1978.10837.
   The window catalogue behind `firwin`'s `window` option.
@@ -195,8 +188,8 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
   `designBiquad` uses; it is not a SciPy design and nothing golden-tested
   depends on it.
 - Gustafsson, F. (1996). Determining the initial states in forward-backward
-  filtering. *IEEE Trans Signal Process* 44:988–992. Steady-state initial
-  conditions for `filtfilt` (D6).
+  filtering. *IEEE Trans Signal Process* 44(4):988–992.
+  doi:10.1109/78.492552. Steady-state initial conditions for `filtfilt`.
 - Widmann, A., Schröger, E. & Maess, B. (2015). Digital filter design for
   electrophysiological data – a practical approach. *J Neurosci Methods*
   250:34–46. doi:10.1016/j.jneumeth.2014.08.002.
@@ -206,7 +199,7 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
 - Task Force of the ESC and NASPE (1996). Heart rate variability: standards of
   measurement, physiological interpretation and clinical use. *Circulation*
   93(5):1043–1065. doi:10.1161/01.CIR.93.5.1043. SDNN and RMSSD on
-  normal-to-normal intervals (D7).
+  normal-to-normal intervals.
 - Shin, H.S., Lee, C. & Lee, M. (2009). Adaptive threshold method for the peak
   detection of photoplethysmographic waveform. *Comput Biol Med*
   39(12):1145–1152. doi:10.1016/j.compbiomed.2009.10.006. The package's
@@ -238,8 +231,9 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
   alignment) and the 10% heart-rate error bar.
 - Lipponen, J.A. & Tarvainen, M.P. (2019). A robust algorithm for heart rate
   variability time series artefact correction using novel beat
-  classification. *J Med Eng Technol.* NN-interval cleaning, the usual
-  remedy for the false beats behind D7 (closed by switching detector).
+  classification. *J Med Eng Technol* 43(3):173–181.
+  doi:10.1080/03091902.2019.1640306. NN-interval cleaning, the usual
+  remedy for false beats in HRV.
 - Tang, Q. et al. (2020). Synthetic photoplethysmogram generation using two
   Gaussian functions. *Sci Rep* 10:13883. doi:10.1038/s41598-020-69076-x.
   The pulse model for the synthetic PPG in `inputs.py`.
@@ -267,7 +261,7 @@ Where each reference is used is noted in the matching `ref_*.py` and test.
 
 - AES17-2020. *AES standard method for digital audio engineering —
   Measurement of digital audio equipment.* Audio Engineering Society. The
-  dBFS definition (C3).
+  dBFS definition.
 - Burgess, A.P. (2013). On the interpretation of synchronization in EEG
   hyperscanning studies: a cautionary note. *Front Hum Neurosci* 7:881.
   doi:10.3389/fnhum.2013.00881. Context for `Correlation` as a synchrony

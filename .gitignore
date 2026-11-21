@@ -14,8 +14,8 @@
 /tests/unit/golden/.cache/
 tests/.DS_Store
 
-# Docs live in Notion
-/docs/
+# Working notes; design docs live in Notion
+/notes/
 
 # Local credentials for the demo app
 /demos/.env

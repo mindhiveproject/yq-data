@@ -214,8 +214,7 @@ describe("golden: Pearson correlation vs scipy.stats.pearsonr", () => {
 
   // The node documents "computed over the shorter of the two windows". Both
   // windows end at their newest sample, so the overlap is the newest samples
-  // of each, and both means are taken over it. Was divergence D8 (means over
-  // each whole array, products over the overlap only).
+  // of each, and both means are taken over it, not over each whole array.
   it("unequal window lengths: r over the newest-sample overlap", () => {
     const out = new Correlation({ mode: "paired" }).analyze({
       a: packetFor(unequal.a),
