@@ -3,7 +3,7 @@
  * packet, with every input taken from the same moment.
  *
  * The canonical case is frontal alpha asymmetry — one headset, left and right
- * channels split into separate branches, rejoined at a difference node. The
+ * channels split into separate branches, rejoined at a math node. The
  * checks read the effect where a bound visual would: in the values the join
  * emits, against a truth that is known by construction.
  */
@@ -64,8 +64,8 @@ function asymmetry(parameters: Record<string, any> = {}) {
       { id: "right", method: "channel_selection", parameters: { indices: [1] } },
       {
         id: "asym",
-        method: "difference",
-        parameters: { mode: "signed", ...parameters },
+        method: "math",
+        parameters: { operation: "subtract", ...parameters },
       },
     ],
     edges: [
@@ -110,7 +110,7 @@ describe("a diamond rejoining at a multi-input node", () => {
       nodes: [
         { id: "src", receiver: "m" },
         { id: "pass", method: "normalization", parameters: { mode: "fixed", min: 0, max: 100 } },
-        { id: "join", method: "difference", parameters: { mode: "signed" } },
+        { id: "join", method: "math", parameters: { operation: "subtract" } },
       ],
       edges: [
         { from: ["src"], to: ["join", "a"] },
@@ -140,7 +140,7 @@ describe("a diamond rejoining at a multi-input node", () => {
         { id: "s2", receiver: "m" },
         { id: "left", method: "channel_selection", parameters: { indices: [0] } },
         { id: "right", method: "channel_selection", parameters: { indices: [1] } },
-        { id: "asym", method: "difference", parameters: { mode: "signed" } },
+        { id: "asym", method: "math", parameters: { operation: "subtract" } },
       ],
       edges: [
         { from: ["s1"], to: ["left"] },
@@ -167,7 +167,7 @@ describe("a diamond rejoining at a multi-input node", () => {
         { id: "src", receiver: "m" },
         { id: "win", method: "windowing", parameters: { size: 2, hop: 2, unit: "samples" } },
         { id: "mean", method: "channel_selection", parameters: { indices: [0], average: true } },
-        { id: "join", method: "difference", parameters: { mode: "signed" } },
+        { id: "join", method: "math", parameters: { operation: "subtract" } },
       ],
       edges: [
         { from: ["src"], to: ["mean"] },
@@ -183,11 +183,12 @@ describe("a diamond rejoining at a multi-input node", () => {
 
     for (let k = 1; k <= 4; k++) device.send(1000 + k * 100, k);
 
+    // `mean` is one sample, so it is subtracted from each of the window's two.
     // Packet 1: the window is not full, and `join` has nothing yet for port b.
-    // Packet 2: both branches fire in the one wave, 2 - 1.
-    // Packet 3: only `mean` fires, and pairs with the window it last got, 3 - 1.
-    // Packet 4: both fire again, 4 - 3.
-    expect(emitted).toEqual([[1], [2], [1]]);
+    // Packet 2: both branches fire in the one wave, 2 - [1, 2].
+    // Packet 3: only `mean` fires, and pairs with the window it last got, 3 - [1, 2].
+    // Packet 4: both fire again, 4 - [3, 4].
+    expect(emitted).toEqual([[1, 0], [2, 1], [1, 0]]);
   });
 });
 
@@ -200,7 +201,7 @@ describe("several packets from one node in a wave", () => {
       nodes: [
         { id: "src", receiver: "m" },
         { id: "win", method: "windowing", parameters: { size: 1, hop: 1, unit: "samples", frames: "all" } },
-        { id: "join", method: "difference", parameters: { mode: "signed" } },
+        { id: "join", method: "math", parameters: { operation: "subtract" } },
       ],
       edges: [
         { from: ["src"], to: ["win"] },

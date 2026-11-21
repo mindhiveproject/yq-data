@@ -164,8 +164,12 @@ export class EMOTIVReceiver extends BaseReceiver {
     });
   }
 
+  /**
+   * @param dataStreams Cortex streams to subscribe to. Defaults to raw EEG
+   *   and motion; band power and the rest can be derived in a pipeline.
+   */
   public async connect(
-    dataStreams: DataStreams[],
+    dataStreams: DataStreams[] = ["eeg", "mot"],
     timeoutDuration: number = 10000
   ): Promise<void> {
     console.log("[EMOTIVReceiver] Connecting to EMOTIV headset...");

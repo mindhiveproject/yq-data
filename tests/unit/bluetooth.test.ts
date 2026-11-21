@@ -574,8 +574,7 @@ describe("yq-arduino over Bluetooth", () => {
 /**
  * The groundwork for an EmotiBit. It uses the same Nordic UART UUIDs but sends
  * newline-separated CSV, with no CRC, handshake or descriptors. There is no
- * EmotiBit receiver yet: this pins that the transport can carry one. See
- * docs/emotibit-ble.md.
+ * EmotiBit receiver yet: this pins that the transport can carry one.
  */
 describe("a device that sends lines of text", () => {
   const encoder = new TextEncoder();

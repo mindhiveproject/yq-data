@@ -157,7 +157,7 @@ describe("a node where the two headsets meet", () => {
       nodes: [
         { id: "sa", receiver: "a" },
         { id: "sb", receiver: "b" },
-        { id: "diff", method: "difference", parameters: { mode: "signed" } },
+        { id: "diff", method: "math", parameters: { operation: "subtract" } },
       ],
       edges: [
         { from: ["sa"], to: ["diff", "a"] },

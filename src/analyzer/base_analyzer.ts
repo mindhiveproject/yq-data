@@ -124,7 +124,8 @@ export interface EmitOptions {
  */
 export abstract class AbstractAnalyzer {
   abstract readonly name: string;
-  abstract readonly method: AnalysisMethod;
+  /** A built-in method, or the name a custom node was registered under. */
+  abstract readonly method: AnalysisMethod | string;
   abstract readonly stage: ProcessingStage;
 
   /** Parameters for analysis, initialized via constructor */

@@ -16,3 +16,6 @@ tests/.DS_Store
 
 # Docs live in Notion
 /docs/
+
+# Local credentials for the demo app
+/demos/.env

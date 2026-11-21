@@ -6,6 +6,9 @@
 export { BaseReceiver } from "./base_receiver";
 export type { PacketOptions } from "./base_receiver";
 
+// Receiver types by name, for applications that store what to connect
+export * from "./registry";
+
 // Hardware devices
 export * from "./devices/muse";
 export * from "./devices/emotiv";

@@ -275,22 +275,20 @@ export enum ProcessingStage {
 }
 
 /**
- * Common analysis methods used in signal processing
+ * The built-in analysis methods, one per registered node. A custom node
+ * registered with `registerAnalyzer` names itself with any other string.
  */
 export enum AnalysisMethod {
   // Preprocessing & Cleaning
   FILTERING = "filtering",
-  RESCALING = "rescaling",
   NORMALIZATION = "normalization",
-  ARTIFACT_REJECTION = "artifact_rejection",
-  ICA_CLEANING = "ica_cleaning",
-  DETRENDING = "detrending",
-  SMOOTHING = "smoothing",
   CHANNEL_SELECTION = "channel_selection",
 
-  // Segmentation / Epoching
-  EPOCHING = "epoching",
+  // Segmentation
   WINDOWING = "windowing",
+
+  // Arithmetic between streams
+  MATH = "math",
 
   // Routing — structure of the graph rather than of the signal
   STREAM_SELECTION = "stream_selection",
@@ -299,25 +297,12 @@ export enum AnalysisMethod {
   // Transformation
   FFT = "fft",
   PSD = "psd",
-  SPECTROGRAM = "spectrogram",
-  WAVELET_TRANSFORM = "wavelet_transform",
-  ICA_DECOMPOSITION = "ica_decomposition",
   PULSE_EXTRACTION = "pulse_extraction",
 
   // Feature Extraction
   BAND_POWER = "band_power",
   STATISTICAL_FEATURES = "statistical_features",
-  PEAK_DETECTION = "peak_detection",
   CONNECTIVITY = "connectivity",
   RMS = "rms",
   HEART_RATE = "heart_rate",
-
-  // Inference / Modeling
-  CLASSIFICATION = "classification",
-  REGRESSION = "regression",
-  CLUSTERING = "clustering",
-  EVENT_DETECTION = "event_detection",
-
-  // Other
-  CUSTOM = "custom",
 }

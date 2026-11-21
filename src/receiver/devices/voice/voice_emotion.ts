@@ -1,16 +1,18 @@
 import { Modality, ProcessingStage } from "../../../data_stream.interface";
 import { BaseReceiver } from "../../base_receiver";
 import { ML5Classifier } from "./ml5_model";
+import { version } from "../../../../package.json";
 
 /**
- * Where the emotion classifier's weights are fetched from.
+ * Where the emotion classifier's weights are fetched from: this version of the
+ * package, as published to npm.
  *
- * The model is a 125 KB dense network trained on MSP-PODCAST, carried in this
- * repository rather than the npm tarball so that an application which never
- * touches voice does not pay for it on install.
+ * The model is a 125 KB dense network trained on MSP-PODCAST. It ships in the
+ * tarball's `models/` folder but is fetched rather than bundled, so an
+ * application that never touches voice never loads it. Pass `modelPath` to
+ * serve it yourself.
  */
-export const DEFAULT_VOICE_EMOTION_MODEL =
-  "https://cdn.jsdelivr.net/gh/mindhiveproject/yq-data@main/models/voice-emotion";
+export const DEFAULT_VOICE_EMOTION_MODEL = `https://cdn.jsdelivr.net/npm/yq-data@${version}/models/voice-emotion`;
 
 /**
  * Feature extractor settings passed through to formantanalyzer.

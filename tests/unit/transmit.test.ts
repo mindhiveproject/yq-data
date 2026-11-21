@@ -386,7 +386,7 @@ describe("the protocol spoken on a link", () => {
 });
 
 describe("the old yq-data/1 tag", () => {
-  // Removed on purpose: see docs/migration.md. These pin that it is refused
+  // Removed on purpose when the protocol was renamed. These pin that it is refused
   // quietly, so a producer that has not migrated is easy to diagnose.
   const packet = {
     type: "packet",

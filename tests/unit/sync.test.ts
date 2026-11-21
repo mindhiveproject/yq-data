@@ -9,7 +9,7 @@ import {
   BaseReceiver,
   Correlation,
   DataPacket,
-  Difference,
+  MathNode,
   Modality,
   Pipeline,
   ProcessingStage,
@@ -61,7 +61,7 @@ class StubReceiver extends BaseReceiver {
 }
 
 /**
- * Builds a two-source graph feeding one Difference node, and collects whatever
+ * Builds a two-source graph feeding one Math node, and collects whatever
  * that node emits.
  */
 function harness(parameters: Record<string, any> = {}) {
@@ -72,7 +72,7 @@ function harness(parameters: Record<string, any> = {}) {
     nodes: [
       { id: "sa", receiver: "a" },
       { id: "sb", receiver: "b" },
-      { id: "diff", method: "difference", parameters },
+      { id: "diff", method: "math", parameters },
     ],
     edges: [
       { from: ["sa"], to: ["diff", "a"] },
@@ -103,7 +103,7 @@ describe("sync parameters", () => {
   });
 
   it("defaults to pairing on the latest packet", () => {
-    const analyzer = new Difference();
+    const analyzer = new MathNode();
     expect(analyzer.syncPolicy).toBe("latest");
     expect(analyzer.maxAge).toBe("auto");
   });
@@ -111,7 +111,7 @@ describe("sync parameters", () => {
 
 describe("staleness guard", () => {
   it("stops emitting once a port falls silent", () => {
-    const { a, b, emitted } = harness({ mode: "signed", maxAge: 500 });
+    const { a, b, emitted } = harness({ operation: "subtract", maxAge: 500 });
 
     a.send(1000, 1);
     b.send(1000, 0);
@@ -134,7 +134,7 @@ describe("staleness guard", () => {
 
   it("applies under the timestamp policy too", () => {
     const { a, b, emitted } = harness({
-      mode: "signed",
+      operation: "subtract",
       syncPolicy: "timestamp",
       tolerance: 1000,
       maxAge: 200,
@@ -150,7 +150,7 @@ describe("staleness guard", () => {
   });
 
   it("derives a limit from the port's own cadence when set to auto", () => {
-    const { a, b, emitted } = harness({ mode: "signed" });
+    const { a, b, emitted } = harness({ operation: "subtract" });
 
     // Establish a 100 ms cadence on both ports.
     for (let t = 1000; t <= 1400; t += 100) {
@@ -170,7 +170,7 @@ describe("staleness guard", () => {
 describe("timestamp policy", () => {
   it("drops pairings whose stamps sit further apart than the tolerance", () => {
     const { a, b, emitted } = harness({
-      mode: "signed",
+      operation: "subtract",
       syncPolicy: "timestamp",
       tolerance: 50,
     });
@@ -187,7 +187,7 @@ describe("timestamp policy", () => {
 describe("nearest policy", () => {
   it("pairs against the closest buffered packet, not merely the newest", () => {
     const { a, b, emitted } = harness({
-      mode: "signed",
+      operation: "subtract",
       syncPolicy: "nearest",
       tolerance: 50,
     });
@@ -208,7 +208,7 @@ describe("nearest policy", () => {
 
   it("finds nothing to pair with when no buffered packet is close enough", () => {
     const { a, b, emitted } = harness({
-      mode: "signed",
+      operation: "subtract",
       syncPolicy: "nearest",
       tolerance: 20,
     });
@@ -223,7 +223,7 @@ describe("nearest policy", () => {
 
 describe("pipeline plumbing", () => {
   it("keeps the multi-input port names addressable from a JSON graph", () => {
-    const { emitted } = harness({ mode: "signed" });
+    const { emitted } = harness({ operation: "subtract" });
     expect(emitted).toHaveLength(0);
     expect(ProcessingStage.FEATURES).toBe("features");
   });

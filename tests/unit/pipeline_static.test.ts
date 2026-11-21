@@ -285,19 +285,19 @@ describe("a declared output is the output", () => {
       ["connectivity", {}],
       ["connectivity", { mode: "matrix" }],
       ["connectivity", { mode: "mean", absolute: true }],
-      ["difference", { mode: "similarity" }],
-      ["difference", { mode: "signed", summaryOnly: true }],
+      ["math", { operation: "subtract", absolute: true, scale: -1, offset: 1 }],
+      ["math", { operation: "divide" }],
       ["merge", {}],
       ["merge", { prefixLabels: true }],
     ])("%s %j", (method, parameters) => {
       two(method, parameters);
     });
 
-    it("difference keeps the shorter input's length, and only claims it when both say", () => {
-      const declared = two("difference", {});
+    it("math keeps the shorter input's length, and only claims it when both say", () => {
+      const declared = two("math", {});
       expect(declared.samplesPerChannel).toBe(512);
 
-      const analyzer: any = createAnalyzer("difference", {});
+      const analyzer: any = createAnalyzer("math", {});
       const open = analyzer.describeOutput({
         a: windowedMeta(),
         b: windowedMeta({ samplesPerChannel: undefined }),
@@ -605,7 +605,7 @@ describe("what cannot be known ahead of data is not refused", () => {
   it("falls back to what a node last emitted if it declares nothing", () => {
     class Undeclared extends BaseAnalyzer {
       readonly name = "Undeclared";
-      readonly method = AnalysisMethod.CUSTOM;
+      readonly method = "undeclared_for_test";
       readonly stage = ProcessingStage.FEATURES;
       readonly accepts: Accepts = {};
       analyze(packet: DataPacket) {

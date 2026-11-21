@@ -20,7 +20,7 @@
  *
  * Every message carries `protocol: "yq-stream"` and `v: 1`. Messages tagged
  * `"yq-data/1"`, the name this protocol was first published under, are not
- * read: see `docs/migration.md`.
+ * read, so both ends of a link upgrade together.
  *
  * A consumer that only ever sees `packet` messages (it connected late, the
  * producer never announces) can still reconstruct a usable stream: the packet

@@ -3,8 +3,7 @@
  * or any other byte link, and how it becomes yq-data streams.
  *
  * Framing lives in `framing.ts` and the MessagePack codec in `msgpack.ts`; this
- * is what the decoded values mean. The spec is `docs/arduino-protocol.md`, and
- * `protocol/vectors.json` pins the bytes.
+ * is what the decoded values mean. `protocol/vectors.json` pins the bytes.
  *
  * {@link ArduinoProtocol} is stateful, because a `data` message only makes
  * sense against the descriptors announced before it: a stream index means

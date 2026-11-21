@@ -14,7 +14,6 @@ import {
   StreamTransmitter,
   StreamTransmitterOptions,
 } from "../transmit/stream_transmitter";
-import type { RecorderOptions } from "../recorder/recorder";
 import { Transport } from "../transport/transport";
 import {
   AnyAnalyzer,
@@ -26,7 +25,7 @@ import { createAnalyzer } from "../analyzer/registry";
 import { acceptsFor, checkAccepts } from "../analyzer/compatibility";
 import { matchesStreamFilter, streamFilterFor } from "../utility";
 import { StreamPoint, streamPoints } from "../points";
-import { Observable, Subject, Subscription, merge } from "rxjs";
+import { Observable, Subject, Subscription, filter, merge } from "rxjs";
 
 /** Default port name for the single-input, single-output case. */
 export const DEFAULT_PORT = "in";
@@ -133,34 +132,30 @@ export interface PipelineEdge {
 }
 
 /**
- * Nodes whose output a session records, carried in the graph so a stored
- * pipeline remembers what was being captured.
+ * One of a graph's outputs: a node, and optionally one stream of that node.
  *
- * This is **metadata only** — the pipeline never acts on it. It stands up no
- * `Recorder`, changes nothing about how the graph runs, and leaves the named
- * nodes as ordinary outputs. Recording stays external and imperative: build a
- * `Recorder` yourself and feed it {@link Pipeline.recordTargets}, which
- * resolves these ids to observables. {@link Pipeline.issues} checks that the
- * ids still name readable nodes so a selection stored against an older graph
- * degrades visibly rather than silently.
- *
- * The shape is deliberately small; a node editor that wants per-tap settings
- * can widen it later without the runtime needing to care.
+ * `stream` is needed only when the node carries several streams and just some
+ * of them are outputs — a face tracker emits blendshapes, head pose and the
+ * geometry a preview overlay draws, and only the first two leave the graph.
+ * It is matched against each packet's `metadata.name`.
  */
-export interface PipelineRecord {
-  /** Ids of the nodes to record. Source or analyzer nodes, never `transmit` sinks. */
-  nodes: string[];
-  /** Options a consumer forwards to the `Recorder` it builds from this. */
-  options?: RecorderOptions;
+export interface PipelineGraphOutput {
+  node: string;
+  stream?: string;
 }
 
 export interface PipelineGraph {
   nodes: PipelineNode[];
   edges: PipelineEdge[];
   /**
-   * Optional recording selection. Passive metadata — see {@link PipelineRecord}.
+   * What leaves the graph: the streams a visual binds to, a recorder captures
+   * or a transmitter sends on. Defaults to every terminal node, whole.
+   *
+   * Recording and transmitting are things done *with* outputs, so this is the
+   * one list they all read; {@link Pipeline.outputs}, {@link Pipeline.data}
+   * and {@link Pipeline.describe} follow it.
    */
-  record?: PipelineRecord;
+  outputs?: PipelineGraphOutput[];
 }
 
 export interface PipelineOptions {
@@ -294,6 +289,8 @@ export interface PipelineOutputDescription {
   label?: string;
   method?: string;
   streamID?: string;
+  /** The stream's name (`metadata.name`), which `graph.outputs` selects by. */
+  stream?: string;
   channels: Array<{ index: number; label: string; unit?: string }>;
   /**
    * For a point stream (face or body landmarks), the points it carries and the
@@ -396,6 +393,7 @@ export class Pipeline {
     this.assertEdgesResolve();
     this.assignRanks();
     this.assertSinksAreTerminal();
+    this.assertOutputsResolve();
   }
 
   /* ---------------------------------------------------------------------- */
@@ -544,6 +542,19 @@ export class Pipeline {
         throw new Error(
           `Edge starts at "${edge.from[0]}", which is a transmit node and has no output.`
         );
+      }
+    }
+  }
+
+  /** A declared output must name a node that has an output to read. */
+  private assertOutputsResolve(): void {
+    for (const { node } of this.graph.outputs ?? []) {
+      const runtime = this.nodes.get(node);
+      if (!runtime) {
+        throw new Error(`graph.outputs names "${node}", which is not a node in this graph.`);
+      }
+      if (runtime.definition.transmit) {
+        throw new Error(`graph.outputs names "${node}", a transmit sink with no output.`);
       }
     }
   }
@@ -1266,26 +1277,6 @@ export class Pipeline {
       }
     }
 
-    // `graph.record` is passive, so a stale id here never stops the graph
-    // running — it is a warning the recording selection has drifted, for an
-    // editor to surface, not an error that blocks `start({ validate: true })`.
-    for (const id of this.graph.record?.nodes ?? []) {
-      const runtime = this.nodes.get(id);
-      if (!runtime) {
-        found.push({
-          nodeId: id,
-          severity: "warning",
-          reason: `graph.record names "${id}", which is not a node in this graph`,
-        });
-      } else if (runtime.definition.transmit) {
-        found.push({
-          nodeId: id,
-          severity: "warning",
-          reason: `graph.record names "${id}", a transmit sink with no output to record`,
-        });
-      }
-    }
-
     return found;
   }
 
@@ -1578,7 +1569,8 @@ export class Pipeline {
   }
 
   /**
-   * Node ids with no outgoing edges — the graph's terminal outputs.
+   * Node ids with no outgoing edges — the graph's outputs unless
+   * `graph.outputs` names others.
    *
    * Sinks are excluded: a transmit node has no outgoing edge but is not an
    * output to read, so it stays out of `outputs`, `data` and `describe()`.
@@ -1627,50 +1619,38 @@ export class Pipeline {
     return out;
   }
 
-  /** Every terminal node's output, keyed by node id. */
-  public get outputs(): Map<string, Observable<DataPacket>> {
-    const map = new Map<string, Observable<DataPacket>>();
-    for (const id of this.terminalNodes) map.set(id, this.getOutput(id));
-    return map;
-  }
-
-  /** Merged stream of every terminal output. */
-  public get data(): Observable<DataPacket> {
-    const outputs = this.terminalNodes.map((id) => this.getOutput(id));
-    return outputs.length > 0 ? merge(...outputs) : new Subject<DataPacket>();
+  /** The graph's outputs: `graph.outputs`, or every terminal node whole. */
+  private get outputList(): PipelineGraphOutput[] {
+    return this.graph.outputs ?? this.terminalNodes.map((node) => ({ node }));
   }
 
   /**
-   * The outputs named by `graph.record`, keyed by node id, ready to hand to a
-   * `Recorder`.
-   *
-   * The pipeline records nothing itself — `graph.record` is a stored selection
-   * of tap points, and this resolves it:
-   *
-   * ```ts
-   * const recorder = new Recorder(pipeline.recordOptions);
-   * for (const source of pipeline.recordTargets().values()) recorder.addSource(source);
-   * recorder.start();
-   * ```
-   *
-   * Ids that no longer name a readable node — renamed, deleted, or turned into
-   * a transmit sink since the graph was stored — are left out, and
-   * {@link issues} reports them as warnings, so a stale selection degrades
-   * rather than throws. Any non-sink node qualifies, not just terminal ones.
+   * Every output, keyed by node id. A node declared with only some of its
+   * streams passes just those.
    */
-  public recordTargets(): Map<string, Observable<DataPacket>> {
+  public get outputs(): Map<string, Observable<DataPacket>> {
+    const streams = new Map<string, Set<string> | null>();
+    for (const { node, stream } of this.outputList) {
+      const named = streams.get(node);
+      if (stream === undefined || named === null) streams.set(node, null);
+      else streams.set(node, (named ?? new Set()).add(stream));
+    }
+
     const map = new Map<string, Observable<DataPacket>>();
-    for (const id of this.graph.record?.nodes ?? []) {
-      const runtime = this.nodes.get(id);
-      if (!runtime || runtime.definition.transmit) continue;
-      map.set(id, runtime.output$.asObservable());
+    for (const [node, named] of streams) {
+      const output = this.getOutput(node);
+      map.set(
+        node,
+        named ? output.pipe(filter((p) => named.has(p.metadata.name ?? ""))) : output
+      );
     }
     return map;
   }
 
-  /** Recorder options carried in `graph.record`, if the graph set any. */
-  public get recordOptions(): RecorderOptions | undefined {
-    return this.graph.record?.options;
+  /** Merged stream of every output. */
+  public get data(): Observable<DataPacket> {
+    const outputs = [...this.outputs.values()];
+    return outputs.length > 0 ? merge(...outputs) : new Subject<DataPacket>();
   }
 
   /** Most recent output metadata for a node, once it has emitted at least once. */
@@ -1679,7 +1659,7 @@ export class Pipeline {
   }
 
   /**
-   * What this pipeline exposes, per terminal output: the channels it will carry
+   * What this pipeline exposes, per output: the channels it will carry
    * and the rate they arrive at.
    *
    * Available before any data flows. Each analyzer declares how it shapes its
@@ -1694,9 +1674,9 @@ export class Pipeline {
    * `streamID` tells them apart.
    */
   public describe(): PipelineOutputDescription[] {
-    const known = new Map<string, StreamMetadata[]>();
+    const cache = new Map<string, StreamMetadata[]>();
 
-    return this.terminalNodes.flatMap((id): PipelineOutputDescription[] => {
+    return this.outputList.flatMap(({ node: id, stream }): PipelineOutputDescription[] => {
       const definition = this.nodes.get(id)!.definition;
       const node = {
         nodeId: id,
@@ -1704,10 +1684,15 @@ export class Pipeline {
         method: definition.method,
       };
 
-      const outputs = this.knownOutputsOf(id, known);
+      const known = this.knownOutputsOf(id, cache);
+      const outputs =
+        stream === undefined ? known : known.filter((meta) => meta.name === stream);
       if (outputs.length === 0) {
-        const reason = this.whyUnknown(id, known);
-        return [{ ...node, channels: [], ...(reason ? { reason } : {}) }];
+        const reason =
+          known.length > 0
+            ? `"${id}" carries no stream named "${stream}"`
+            : this.whyUnknown(id, cache);
+        return [{ ...node, stream, channels: [], ...(reason ? { reason } : {}) }];
       }
 
       return outputs.map((meta): PipelineOutputDescription => {
@@ -1715,6 +1700,7 @@ export class Pipeline {
         return {
           ...node,
           streamID: meta.streamID,
+          stream: meta.name,
           channels: layout?.channels ?? meta.channelInfo ?? [],
           ...(layout ? { points: layout.points } : {}),
           samplingRate: meta.samplingRate,

@@ -126,6 +126,23 @@ Every receiver exposes `connect`, `startStream`, `stopStream`, `disconnect`, an
 `isConnected$` observable, a merged `data` observable, and `getData(stream)` for
 one specific stream.
 
+An application that stores *which* device to connect, rather than code, can
+build receivers by type name. `createReceiver` takes one options object: the
+receiver's own options, plus `videoElement` for a camera receiver and
+`transport` for one that reads a link. `registerReceiver(type, factory)` adds
+your own, and `registeredReceivers()` lists them.
+
+```ts
+import { createReceiver } from "yq-data";
+
+const muse = createReceiver("muse");
+const face = createReceiver("face_landmark", { videoElement, maxFps: 15 });
+```
+
+The built-in types are `muse`, `emotiv`, `microphone`, `voice_emotion`,
+`video`, `face_landmark`, `face_emotion`, `pose`, `rppg`, `lsl`, `marker`,
+`file_replay`, `arduino` and `remote`.
+
 ### Muse S Athena
 
 The 2025 Muse S (model MS-03, USB-C) sends every sensor on one Bluetooth
@@ -485,9 +502,8 @@ sim.emit("pot", [2.5]);
 ```
 
 `ArduinoReceiver` needs the optional `@msgpack/msgpack` peer dependency, loaded
-on connect. The protocol is specified in
-[docs/arduino-protocol.md](docs/arduino-protocol.md), with shared test vectors in
-`protocol/vectors.json` that both this package and the Arduino library are
+on connect. The wire format is pinned by shared test vectors in
+`protocol/vectors.json`, which both this package and the Arduino library are
 tested against.
 
 ## Pipelines
@@ -549,6 +565,34 @@ const pipeline = new Pipeline(graph, {
   onError: (error, nodeId) => reportToMyApp(nodeId, error),
 });
 ```
+
+### Outputs
+
+What leaves a graph — what a visual binds to, a `Recorder` captures or a
+transmitter sends — is its **outputs**. By default every terminal node is one,
+whole. A graph can name them instead, down to one stream of a node that carries
+several:
+
+```ts
+const pipeline = new Pipeline({
+  nodes: [{ id: "camera", receiver: "face" }],
+  edges: [],
+  // The tracker also emits the face box and landmarks a preview draws;
+  // only these two leave the graph.
+  outputs: [
+    { node: "camera", stream: "blendshapes" },
+    { node: "camera", stream: "head_pose" },
+  ],
+});
+
+pipeline.outputs;     // Map<nodeId, Observable<DataPacket>>, only the named streams
+pipeline.data;        // all of them merged
+pipeline.describe();  // one entry per output stream, before any data flows
+```
+
+`stream` matches a packet's `metadata.name`. An output may be any node,
+terminal or not, but not a `transmit` sink; naming one that does not exist is
+rejected at construction, like an edge would be.
 
 ### Compatibility
 
@@ -687,7 +731,7 @@ length a visible property of the pipeline. Anything spectral needs one upstream.
 | `RMS` | `RMSAnalyzer` | Amplitude, linear or dBFS |
 | `HEART_RATE` | `HeartRate` | BPM from a pulse waveform, plus HRV |
 | `CONNECTIVITY` | `Correlation` | Correlation between two streams |
-| `difference` | `Difference` | Element-wise comparison — facial synchrony |
+| `MATH` | `MathNode` | Arithmetic between two streams: add, subtract, multiply, divide, power; then optional absolute value, scale and offset |
 | `STREAM_SELECTION` | `StreamSelection` | Passes some streams off a shared wire, drops the rest |
 | `MERGE` | `Merge` | Joins several streams into one multi-channel stream |
 
@@ -774,8 +818,8 @@ rate that describes none of its channels.
 
 ### Multi-input nodes
 
-`Correlation` and `Difference` extend `MultiInputAnalyzer`, which takes several
-named ports. Edges route to a port by name:
+`Correlation`, `MathNode` and `Merge` extend `MultiInputAnalyzer`, which takes
+several named ports. Edges route to a port by name:
 
 ```ts
 edges: [
@@ -801,7 +845,7 @@ the rule meaningful when a recording is replayed off real time.
 A multi-input node runs once per upstream packet, after every branch that feeds
 it has finished. That matters wherever branches split and rejoin — frontal alpha
 asymmetry splits left and right channels off one headset and rejoins them at a
-`difference` node — where a node that ran as soon as the first branch arrived
+`math` node — where a node that ran as soon as the first branch arrived
 would pair it with the other branch's *previous* packet and then run again, two
 outputs per packet, one of them stale. Source nodes reading the same receiver
 count as branches of the same split. A branch that did not emit this time (a
@@ -846,32 +890,14 @@ recorder.start();
 
 Recording is deliberately **not** a node and not wired into the graph's
 execution — it is a side channel you start and stop by hand, and it can just as
-well be attached after the fact. What the graph *can* carry is the selection:
-an optional, passive `record` block naming the tap points a session captured,
-so a stored `{ nodes, edges }` remembers them.
+well be attached after the fact. To capture what a graph puts out, feed the
+recorder its [outputs](#outputs):
 
 ```ts
-const pipeline = new Pipeline({
-  nodes: [ /* ... */ ],
-  edges: [ /* ... */ ],
-  record: {
-    nodes: ["eeg", "bands"],
-    options: { includeTimestamps: true },   // forwarded to the Recorder
-  },
-});
-
-const recorder = new Recorder(pipeline.recordOptions);
-for (const source of pipeline.recordTargets().values()) recorder.addSource(source);
+const recorder = new Recorder();
+for (const output of pipeline.outputs.values()) recorder.addSource(output);
 recorder.start();
 ```
-
-The pipeline never acts on `record`: it builds no `Recorder`, and the named
-nodes stay ordinary outputs. `recordTargets()` resolves the ids to observables,
-skipping any that no longer name a readable node; `issues()` reports those as
-**warnings**, never errors, so a selection stored against an older graph
-degrades visibly instead of blocking `start({ validate: true })`. The shape is intentionally
-minimal — a node editor that wants per-tap settings can widen it later without
-the runtime needing to care.
 
 ## Sending streams elsewhere
 
@@ -985,8 +1011,6 @@ send nothing), and optionally `encodeMeta(metadata)`. A protocol with no
 `encodeMeta` has no metadata message, and a transmitter speaking it never
 announces. Two of the three are translation layers onto this package's own
 streams: `lsl` is decode-only, and `yq-arduino` quantises on the way out.
-Coming from the first networking release? See
-[docs/migration.md](docs/migration.md).
 
 ### The stream protocol
 
@@ -1172,11 +1196,11 @@ Software this package builds on:
 
 ## Dependencies
 
-Runtime dependencies are `rxjs` and `muse-js`. The DSP in `analyzer/methods` has
+Runtime dependencies are `rxjs` and `muse-jsx`. The DSP in `analyzer/methods` has
 none: the FFT behind every spectrum is a radix-2 transform in
 `analyzer/methods/fft.ts`.
 
-Five packages are **optional peer dependencies**, dynamically imported only
+Six packages are **optional peer dependencies**, dynamically imported only
 when a feature that needs them is used. An application that only talks to a Muse
 never downloads MediaPipe:
 
@@ -1187,12 +1211,14 @@ never downloads MediaPipe:
 | `formantanalyzer` | `VoiceEmotionReceiver` |
 | `jszip` | `Recorder`, `FileReplayReceiver` |
 | `papaparse` | `FileReplayReceiver` |
+| `@msgpack/msgpack` | `ArduinoReceiver` (`msgpackCodec`) |
 
 Model weights are fetched at connect time rather than bundled, so nothing large
 ships in the tarball. Every receiver that loads a model accepts a path option
 (`modelAssetPath`, `modelPath`) for applications that would rather self-host
-than reach a CDN. The voice emotion classifier lives in `models/` in this
-repository; the rest come from their upstream projects.
+than reach a CDN. The voice emotion classifier ships in this package's
+`models/` folder and is fetched from this version on npm; the rest come from
+their upstream projects.
 
 `VoiceEmotionReceiver` runs the classifier itself rather than through
 TensorFlow.js — it is a 30k-parameter dense stack, and `ML5Classifier` reads

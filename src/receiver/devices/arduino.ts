@@ -56,8 +56,6 @@ export interface ArduinoOptions
  *
  * Timestamps from the board are filed under `deviceTime`, unwrapped across its
  * 32-bit counter. They are the board's clock, not the page's.
- *
- * @see docs/arduino-protocol.md
  */
 export class ArduinoReceiver extends RemoteStreamReceiver {
   deviceName = "Arduino";

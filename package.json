@@ -28,7 +28,7 @@
     "speech",
     "face"
   ],
-  "license": "ISC",
+  "license": "UNLICENSED",
   "bugs": {
     "url": "https://github.com/mindhiveproject/yq-data/issues"
   },
@@ -49,7 +49,8 @@
     "typescript": "^5.6.3"
   },
   "files": [
-    "dist"
+    "dist",
+    "models"
   ],
   "dependencies": {
     "muse-jsx": "^0.3.1",
