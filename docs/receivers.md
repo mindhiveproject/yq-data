@@ -10,9 +10,9 @@ Every receiver exposes `connect`, `startStream`, `stopStream`, `disconnect`, an 
 
 An application that stores *which* device to connect, rather than code, can
 build receivers by type name. `createReceiver` takes one options object: the
-receiver's own options, plus `videoElement` for a camera receiver and
-`transport` for one that reads a link. `registerReceiver(type, factory)` adds
-your own, and `registeredReceivers()` lists them.
+receiver's own options, plus `videoElement` for a camera receiver.
+`registerReceiver(type, factory)` adds your own, and `registeredReceivers()`
+lists them.
 
 ```ts
 import { createReceiver } from "@mindhive_science/yq-data";
@@ -20,6 +20,31 @@ import { createReceiver } from "@mindhive_science/yq-data";
 const muse = createReceiver("muse");
 const face = createReceiver("face_landmark", { videoElement, maxFps: 15 });
 ```
+
+Receivers that read a link take plain options saying how to open it, so they
+can be stored as JSON too, and all connect with no arguments:
+
+```ts
+createReceiver("lsl", { address: "ws://localhost:8080" });
+createReceiver("remote", { url: "ws://lab-pc:9000" });
+createReceiver("arduino", { link: "serial", linkOptions: { baudRate: 115200 } });
+createReceiver("arduino", { link: "bluetooth" });
+```
+
+An Arduino's port or device is asked for when `connect()` is called, so call it
+from a click. A live `transport` still works in place of any of these.
+
+These three learn their streams from the other end, so they cannot describe
+themselves before connecting. When you know what is on the other end, say so
+with `expects` — metadata, or the name of the receiver that would produce it:
+
+```ts
+// A relay forwarding a Muse describes itself as one until it announces.
+createReceiver("remote", { url, expects: "muse" });
+```
+
+Whatever the other end announces replaces it, and `streams$` emits on each
+new stream or metadata change, so read `pipeline.describe()` again then.
 
 The built-in types are `muse`, `emotiv`, `microphone`, `voice_emotion`,
 `video`, `face_landmark`, `face_emotion`, `pose`, `rppg`, `lsl`, `marker`,
@@ -101,8 +126,8 @@ talk to LSL directly — it connects to a relay running on the machine the
 streams are on, which forwards them as JSON over a WebSocket:
 
 ```ts
-const lsl = new LSLReceiver();
-await lsl.connect("ws://localhost:8080");
+const lsl = new LSLReceiver({ address: "ws://localhost:8080" });
+await lsl.connect();
 ```
 
 [LSLWebsocketMirror](https://github.com/esromerog/LSLWebsocketMirror) is a

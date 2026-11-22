@@ -1,10 +1,16 @@
-import { Modality } from "../../data_stream.interface";
+import { Modality, StreamMetadata } from "../../data_stream.interface";
 import { Transport } from "../../transport/transport";
 import { WebSocketTransport } from "../../transport/websocket";
 import { LSLProtocol } from "../../transport/lsl_protocol";
 import { RemoteStreamReceiver } from "./remote";
 
 export interface LSLOptions {
+  /**
+   * The relay's address, e.g. `ws://localhost:8080`. Lets the receiver be
+   * built from stored options and connected with no arguments; an address
+   * passed to `connect()` replaces it.
+   */
+  address?: string;
   /** Reconnect automatically after an unexpected close. Default `true`. */
   autoReconnect?: boolean;
   /** Initial reconnect delay in ms; doubles up to `maxReconnectDelay`. */
@@ -16,6 +22,8 @@ export interface LSLOptions {
    * in a test.
    */
   transport?: (address: string) => Transport;
+  /** Streams the relay is expected to carry; see `RemoteStreamOptions.expects`. */
+  expects?: StreamMetadata[];
 }
 
 /**
@@ -55,9 +63,9 @@ export class LSLReceiver extends RemoteStreamReceiver {
   private readonly address: { current: string };
 
   constructor(options: LSLOptions = {}) {
-    const address = { current: "" };
+    const { transport: makeTransport, address: initial, expects, ...reconnect } = options;
+    const address = { current: initial ?? "" };
     const protocol = new LSLProtocol();
-    const { transport: makeTransport, ...reconnect } = options;
 
     super(
       () =>
@@ -67,6 +75,7 @@ export class LSLReceiver extends RemoteStreamReceiver {
       {
         protocol,
         deviceID: "LSL",
+        expects,
         // The relay's clock is the sender's, never ours.
         trustRemoteClock: false,
       }

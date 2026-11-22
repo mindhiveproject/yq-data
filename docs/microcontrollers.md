@@ -14,7 +14,9 @@ board.data.subscribe((packet) => ...);
 ```
 
 `SerialTransport.request()` shows the browser's port picker and needs a click
-handler. A port the user has granted before reopens without one through
+handler. To build the board from stored options instead,
+`createReceiver("arduino", { link: "serial" })` (or `"bluetooth"`) asks for the
+port inside `connect()`. A port the user has granted before reopens without one through
 `SerialTransport.granted()`. Chromium browsers only, like the Muse.
 
 Over Bluetooth Low Energy, only the transport changes:

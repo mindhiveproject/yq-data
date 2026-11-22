@@ -65,7 +65,11 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
    */
   private readonly allData$ = new Subject<DataPacket<DataType>>();
 
-  /** Emits whenever the set of available streams changes. */
+  /**
+   * Emits whenever a stream is registered or its metadata changes — the cue to
+   * read `pipeline.describe()` again for a source that only learns its streams
+   * by connecting, such as a relay announcing what it forwards.
+   */
   public readonly streams$ = new BehaviorSubject<StreamIdentifierLiteral[]>([]);
 
   /** Abstract properties that must be defined by subclasses */
@@ -415,10 +419,12 @@ export abstract class BaseReceiver<DataType extends TypedArray = Float32Array> {
       return;
     }
 
-    this.streamMeta.set(streamIDString, {
-      ...currentMeta,
-      ...newMetadata,
-    });
+    const next = { ...currentMeta, ...newMetadata };
+    this.streamMeta.set(streamIDString, next);
+    // A peer repeats its announcements on a timer; only a change is news.
+    if (JSON.stringify(next) !== JSON.stringify(currentMeta)) {
+      this.streams$.next(this.streams);
+    }
   }
 
   /**

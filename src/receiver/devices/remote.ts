@@ -44,6 +44,13 @@ export interface RemoteStreamOptions {
    * the receiver's own and is always closed.)
    */
   closeTransportOnDisconnect?: boolean;
+  /**
+   * Streams the other end is expected to send, reported by
+   * `expectedStreams()` until it announces its own — a relay forwarding a
+   * Muse, say. What arrives replaces them. `createReceiver` also accepts a
+   * receiver type here (`expects: "muse"`) and borrows that receiver's plan.
+   */
+  expects?: StreamMetadata[];
 }
 
 interface RemoteStream {
@@ -74,14 +81,16 @@ interface RemoteStream {
  * Give it a **factory** instead of a transport when the address is not known
  * until `connect()`, or when the receiver should be able to connect again after
  * a `disconnect()`: each `connect()` calls the factory for a fresh transport,
- * and a failed connect closes it again. `LSLReceiver` is built this way.
+ * and a failed connect closes it again. The factory may be async, e.g. one that
+ * asks the user to pick a serial port. `LSLReceiver` is built this way.
  */
 export class RemoteStreamReceiver extends BaseReceiver {
   deviceName = "Remote";
   modalities: Modality[] = [Modality.UNKNOWN];
   deviceID: string | number;
 
-  private readonly makeTransport?: () => Transport;
+  private readonly makeTransport?: () => Transport | Promise<Transport>;
+  private readonly expected: StreamMetadata[];
   private current?: Transport;
   /** The protocol given at construction, if any. Unset means the transport's own. */
   readonly protocol?: Protocol;
@@ -94,7 +103,7 @@ export class RemoteStreamReceiver extends BaseReceiver {
   private streaming = false;
 
   constructor(
-    transport: Transport | (() => Transport),
+    transport: Transport | (() => Transport | Promise<Transport>),
     options: RemoteStreamOptions = {}
   ) {
     super();
@@ -109,6 +118,17 @@ export class RemoteStreamReceiver extends BaseReceiver {
       options.trustRemoteClock ?? this.current?.structuredClone ?? false;
     this.closeTransportOnDisconnect =
       options.closeTransportOnDisconnect ?? true;
+    this.expected = options.expects ?? [];
+  }
+
+  /** What `expects` said would arrive; superseded by what does. */
+  public expectedStreams(): StreamMetadata[] {
+    return this.expected;
+  }
+
+  /** Whether a transport exists yet — with a factory, not before `connect()`. */
+  protected get hasTransport(): boolean {
+    return this.current !== undefined;
   }
 
   /**
@@ -130,7 +150,9 @@ export class RemoteStreamReceiver extends BaseReceiver {
   public async connect(): Promise<void> {
     if (this.isConnected) return;
 
-    if (this.makeTransport) this.current = this.makeTransport();
+    // Awaited first, so a factory that asks the user to pick a port or a
+    // device still runs inside the click that called connect().
+    if (this.makeTransport) this.current = await this.makeTransport();
     try {
       await this.transport.ready();
     } catch (error) {

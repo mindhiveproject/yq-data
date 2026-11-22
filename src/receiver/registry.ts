@@ -13,11 +13,27 @@ import { PoseReceiver } from "./devices/vision/pose";
 import { RPPGReceiver } from "./devices/vision/rppg";
 import { FaceEmotionReceiver } from "./devices/vision/face_emotion";
 import { VoiceEmotionReceiver } from "./devices/voice/voice_emotion";
+import { StreamMetadata } from "../data_stream.interface";
+import { WebSocketTransport } from "../transport/websocket";
+import { SerialTransport } from "../transport/serial";
+import { BluetoothTransport } from "../transport/bluetooth";
 
 /**
  * Constructs a receiver from one plain options object: the receiver's own
- * options, plus `videoElement` for a camera-derived receiver and `transport`
- * for one that reads a link.
+ * options, plus `videoElement` for a camera-derived receiver. A receiver that
+ * reads a link takes a live `transport`, or plain options that say how to
+ * open one on `connect()`, so it can be built from stored JSON:
+ *
+ * - `lsl`: `{ address }`, the relay's WebSocket URL.
+ * - `remote`: `{ url }`, a yq-stream peer's WebSocket URL.
+ * - `arduino`: `{ link: "serial" | "bluetooth", linkOptions? }`; the port or
+ *   device is asked for when `connect()` is called, so call it from a click.
+ *   `linkOptions` go to `SerialTransport.request()` (e.g. `baudRate`) or
+ *   `BluetoothTransport.request()` (e.g. `filters`).
+ *
+ * Those three also take `expects`: the streams the other end will send, or
+ * the name of a registered receiver whose streams they are (`"muse"` for a
+ * relay forwarding a Muse), reported until the real ones are announced.
  */
 export type ReceiverFactory = (options: Record<string, any>) => BaseReceiver<any>;
 
@@ -75,8 +91,37 @@ registerReceiver(
 );
 registerReceiver("pose", ({ videoElement, ...o }) => new PoseReceiver(videoElement, o));
 registerReceiver("rppg", ({ videoElement, ...o }) => new RPPGReceiver(videoElement, o));
-registerReceiver("lsl", (o) => new LSLReceiver(o));
+/** `expects` as stored: metadata, or the receiver type that would produce it. */
+function expectedStreams(expects: unknown): StreamMetadata[] | undefined {
+  if (typeof expects !== "string") return expects as StreamMetadata[] | undefined;
+  return createReceiver(expects).expectedStreams();
+}
+
+registerReceiver(
+  "lsl",
+  ({ expects, ...o }) => new LSLReceiver({ ...o, expects: expectedStreams(expects) })
+);
 registerReceiver("marker", (o) => new MarkerReceiver(o));
 registerReceiver("file_replay", (o) => new FileReplayReceiver(o));
-registerReceiver("arduino", ({ transport, ...o }) => new ArduinoReceiver(transport, o));
-registerReceiver("remote", ({ transport, ...o }) => new RemoteStreamReceiver(transport, o));
+registerReceiver("arduino", ({ transport, link, linkOptions, expects, ...o }) => {
+  const open =
+    transport ??
+    (link === "bluetooth"
+      ? () => BluetoothTransport.request(linkOptions)
+      : link === "serial" || link === undefined
+        ? () => SerialTransport.request(linkOptions)
+        : undefined);
+  if (!open) {
+    throw new Error(`Unknown Arduino link "${link}"; use "serial" or "bluetooth".`);
+  }
+  return new ArduinoReceiver(open, { ...o, expects: expectedStreams(expects) });
+});
+registerReceiver("remote", ({ transport, url, expects, ...o }) => {
+  if (!transport && !url) {
+    throw new Error('A "remote" receiver needs a `url` (or a `transport`).');
+  }
+  return new RemoteStreamReceiver(transport ?? (() => new WebSocketTransport(url)), {
+    ...o,
+    expects: expectedStreams(expects),
+  });
+});

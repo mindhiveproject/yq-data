@@ -1437,7 +1437,7 @@ export class Pipeline {
         return (
           `"${key}" (${receiver.deviceName}) has not announced its streams ` +
           `and cannot say what they will be before it connects; connect it ` +
-          `or give "${nodeId}" expects`
+          `(describe() again when its streams$ emits) or give "${nodeId}" expects`
         );
       }
       return (
@@ -1668,6 +1668,12 @@ export class Pipeline {
    * known, which is as soon as a receiver is attached or a source node
    * `expects` them. Only a custom analyzer that declares nothing reports an
    * empty channel list until it has emitted.
+   *
+   * It is worked out on each call, so a source that learns its streams by
+   * connecting (EMOTIV, LSL, an Arduino, a remote peer) is described as it
+   * actually is once it has announced them, whatever `expects` said, and
+   * including streams nobody expected. Call it again when a receiver's
+   * `streams$` emits.
    *
    * A node that can carry several streams (a source wired straight out, with a
    * Muse's EEG, PPG and accelerometer all on it) appears once per stream, so

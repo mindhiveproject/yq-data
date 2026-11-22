@@ -194,7 +194,13 @@ headset on and no model loaded. A Muse's PPG is laid out as a Muse 2's until it
 connects and reports its model, unless it was told to expect an
 [Athena](receivers.md#muse-s-athena). Receivers that only learn their streams from
 the hardware or a peer (Emotiv, LSL, Arduino, audio) stay unknown until they
-connect, and are where `expects` earns its place.
+connect, and are where `expects` earns its place. A link receiver can also be
+told what device is on the other end
+([`expects: "muse"`](receivers.md#creating-receivers-by-name)).
+
+`describe()` is worked out on each call. Once a source has announced its
+streams, it is described as it really is, `expects` or not, including streams
+nobody expected; each receiver's `streams$` emits when that changes.
 
 When an output is unknown, `describe()` says why in `reason`: no receiver
 attached for a key, a receiver that has not announced anything, or a node

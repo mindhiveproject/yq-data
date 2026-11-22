@@ -71,11 +71,30 @@ export class ArduinoReceiver extends RemoteStreamReceiver {
     (deviceTimeMs: number) => void
   >();
 
-  constructor(transport: Transport, options: ArduinoOptions = {}) {
+  /**
+   * @param transport - The link, or a factory for it that `connect()` calls —
+   * `() => SerialTransport.request()` asks for the port on the click that
+   * connects, and again on a reconnect.
+   */
+  constructor(
+    transport: Transport | (() => Transport | Promise<Transport>),
+    options: ArduinoOptions = {}
+  ) {
     const { route, ...rest } = options;
     const protocol = new ArduinoProtocol();
     protocol.route = route;
-    super(transport, {
+    // The board is the only thing on the other end of this link, so the
+    // receiver claims it, whenever it comes to exist.
+    const claimed =
+      typeof transport === "function"
+        ? async () => {
+            const made = await transport();
+            made.protocol = protocol;
+            return made;
+          }
+        : transport;
+    if (typeof transport !== "function") transport.protocol = protocol;
+    super(claimed, {
       ...rest,
       protocol,
       // Whatever the clocks are, they are not ours.
@@ -86,9 +105,6 @@ export class ArduinoReceiver extends RemoteStreamReceiver {
     this.protocol = protocol;
     this.helloInterval = options.helloInterval ?? 500;
     this.handshakeTimeout = options.handshakeTimeout ?? 5000;
-
-    // The board is the only thing on the other end of this link.
-    transport.protocol = protocol;
 
     // Streams register under the board's own id, which arrives before them.
     protocol.onBoard = (board) => {
@@ -140,7 +156,9 @@ export class ArduinoReceiver extends RemoteStreamReceiver {
 
   public async disconnect(): Promise<void> {
     // Tell the board to stop, so it is not left streaming into nothing.
-    if (this.transport.isOpen) this.transport.send(this.protocol.stop());
+    if (this.hasTransport && this.transport.isOpen) {
+      this.transport.send(this.protocol.stop());
+    }
     this.pendingPings.clear();
     await super.disconnect();
   }
