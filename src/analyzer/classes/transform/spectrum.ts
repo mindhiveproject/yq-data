@@ -8,6 +8,7 @@ import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 import { spectrum, SpectrumScaling } from "../../methods/fft";
 import { WindowType } from "../../methods/window";
+import { ParameterSchema } from "../../parameters";
 
 export interface SpectrumParameters {
   window?: WindowType;
@@ -32,14 +33,15 @@ export class SpectrumAnalyzer extends BaseAnalyzer {
   readonly method = AnalysisMethod.PSD;
   readonly stage = ProcessingStage.TRANSFORMED;
 
+  static readonly schema: ParameterSchema = {
+    window: { type: "enum", options: ["hamming", "hann", "blackman", "rectangular"], default: "hamming" },
+    scaling: { type: "enum", options: ["magnitude", "psd"], default: "magnitude" },
+    detrend: { type: "boolean", default: true },
+    maxFrequency: { type: "number", min: 0, unit: "Hz" },
+  };
+
   constructor(parameters: SpectrumParameters = {}) {
-    super({
-      window: "hamming",
-      scaling: "magnitude",
-      detrend: true,
-      maxFrequency: undefined,
-      ...parameters,
-    });
+    super(parameters);
   }
 
   readonly accepts: Accepts = { requiresSamplingRate: true };

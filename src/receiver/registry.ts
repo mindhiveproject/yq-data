@@ -17,6 +17,7 @@ import { StreamMetadata } from "../data_stream.interface";
 import { WebSocketTransport } from "../transport/websocket";
 import { SerialTransport } from "../transport/serial";
 import { BluetoothTransport } from "../transport/bluetooth";
+import { ParameterSchema, ParameterSpec } from "../analyzer/parameters";
 
 /**
  * Constructs a receiver from one plain options object: the receiver's own
@@ -44,10 +45,32 @@ export type ReceiverFactory = (options: Record<string, any>) => BaseReceiver<any
  * unconnected receiver can announce its `expectedStreams()`.
  */
 const registry = new Map<string, ReceiverFactory>();
+const schemas = new Map<string, ParameterSchema>();
 
-/** Registers (or replaces) the implementation of a receiver type. */
-export function registerReceiver(type: string, factory: ReceiverFactory): void {
+/**
+ * Registers (or replaces) the implementation of a receiver type, with the
+ * schema of the options it takes. A type registered without one takes its
+ * options unchecked.
+ */
+export function registerReceiver(
+  type: string,
+  factory: ReceiverFactory,
+  schema?: ParameterSchema
+): void {
   registry.set(type, factory);
+  if (schema) schemas.set(type, schema);
+  else schemas.delete(type);
+}
+
+/**
+ * The options a receiver type takes — type, default and range of each — the
+ * receiving side's twin of `parameterSchema()`.
+ *
+ * It lists what can be stored as JSON. What only the app can supply (a
+ * `videoElement`, EMOTIV's client credentials, a live `transport`) is left out.
+ */
+export function receiverSchema(type: string): ParameterSchema | undefined {
+  return schemas.get(type);
 }
 
 /** Every receiver type currently registered. */
@@ -72,6 +95,119 @@ export function createReceiver(
   }
   return factory(options);
 }
+
+/** Options every camera-derived receiver takes. */
+const VISION: ParameterSchema = {
+  maxFps: { type: "number", min: 1, max: 120, default: 30, unit: "fps" },
+  delegate: { type: "enum", options: ["GPU", "CPU"], default: "GPU" },
+  wasmPath: { type: "string" },
+  modelAssetPath: { type: "string" },
+};
+
+/** `expects` as stored: metadata, or the name of a receiver type. */
+const EXPECTS: ParameterSpec = {
+  type: "json",
+  description: "The streams the other end will send, or the receiver type that would produce them.",
+};
+
+const SCHEMAS: Record<string, ParameterSchema> = {
+  muse: {
+    model: { type: "enum", options: ["auto", "classic", "athena"], default: "auto" },
+    enablePPG: { type: "boolean", default: true },
+    enableAUX: { type: "boolean", default: false },
+    preset: { type: "json", description: "Athena preset." },
+  },
+  emotiv: {
+    socketURL: { type: "string", default: "wss://localhost:6868" },
+    license: { type: "string" },
+    debit: { type: "integer", min: 1 },
+  },
+  microphone: {
+    framesPerPacket: { type: "integer", min: 128, default: 2048 },
+    channelCount: { type: "integer", min: 1 },
+    echoCancellation: { type: "boolean" },
+    noiseSuppression: { type: "boolean" },
+    autoGainControl: { type: "boolean" },
+    deviceId: { type: "string" },
+  },
+  voice_emotion: {
+    emitAffect: { type: "boolean" },
+    affectHalfLife: { type: "number", min: 0, unit: "s" },
+    pauseLength: { type: "number", min: 0 },
+    minSegmentLength: { type: "number", min: 0 },
+    modelPath: { type: "string" },
+  },
+  video: {
+    deviceId: { type: "string" },
+    facingMode: { type: "enum", options: ["user", "environment"], default: "user" },
+    width: { type: "integer", min: 1 },
+    height: { type: "integer", min: 1 },
+    frameRate: { type: "number", min: 1 },
+  },
+  face_landmark: {
+    ...VISION,
+    numFaces: { type: "integer", min: 1, max: 4, default: 1 },
+    emitLandmarks: { type: "boolean", default: false },
+    emitHeadPose: { type: "boolean", default: true },
+    emitFaceBox: { type: "boolean", default: false },
+  },
+  face_emotion: {
+    ...VISION,
+    maxFps: { ...VISION.maxFps, default: 15 },
+    detector: { type: "enum", options: ["tiny", "ssd"], default: "tiny" },
+    minConfidence: { type: "number", min: 0, max: 1, default: 0.5 },
+    numFaces: { type: "integer", min: 1, max: 4, default: 1 },
+    emitAgeGender: { type: "boolean", default: false },
+    emitFaceBox: { type: "boolean", default: false },
+    emitLandmarks: { type: "boolean", default: false },
+    modelPath: { type: "string" },
+  },
+  pose: {
+    ...VISION,
+    numPoses: { type: "integer", min: 1, max: 4, default: 1 },
+    includeVisibility: { type: "boolean", default: false },
+    worldCoordinates: { type: "boolean", default: false },
+  },
+  rppg: {
+    ...VISION,
+    region: { type: "json", default: "both", description: "Skin region the colour is sampled from." },
+    sampleSize: { type: "integer", min: 1, default: 160 },
+    samplingRate: { type: "number", min: 1, unit: "Hz" },
+    maxGap: { type: "number", min: 0, default: 0.25, unit: "s" },
+  },
+  lsl: {
+    address: { type: "string", label: "Relay address" },
+    autoReconnect: { type: "boolean", default: true },
+    reconnectDelay: { type: "number", min: 0, unit: "ms" },
+    maxReconnectDelay: { type: "number", min: 0, unit: "ms" },
+    expects: EXPECTS,
+  },
+  marker: {
+    deviceID: { type: "string", default: "markers" },
+    name: { type: "string" },
+    channelLabel: { type: "string", default: "marker" },
+  },
+  file_replay: {
+    loop: { type: "boolean" },
+    speed: { type: "number", min: 0 },
+    tickInterval: { type: "number", min: 1, unit: "ms" },
+  },
+  arduino: {
+    link: { type: "enum", options: ["serial", "bluetooth"], default: "serial" },
+    linkOptions: { type: "json", description: "Options for the serial port or Bluetooth device request." },
+    helloInterval: { type: "number", min: 0, default: 500, unit: "ms" },
+    handshakeTimeout: { type: "number", min: 0, default: 5000, unit: "ms" },
+    deviceID: { type: "string", default: "arduino" },
+    expects: EXPECTS,
+  },
+  remote: {
+    url: { type: "string", label: "Peer address" },
+    deviceID: { type: "string", default: "remote" },
+    trustRemoteClock: { type: "boolean" },
+    closeTransportOnDisconnect: { type: "boolean", default: true },
+    expects: EXPECTS,
+  },
+};
 
 registerReceiver("muse", (o) => new MuseReceiver(o));
 registerReceiver(
@@ -125,3 +261,5 @@ registerReceiver("remote", ({ transport, url, expects, ...o }) => {
     expects: expectedStreams(expects),
   });
 });
+
+for (const [type, schema] of Object.entries(SCHEMAS)) schemas.set(type, schema);

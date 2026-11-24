@@ -48,7 +48,13 @@ new stream or metadata change, so read `pipeline.describe()` again then.
 
 The built-in types are `muse`, `emotiv`, `microphone`, `voice_emotion`,
 `video`, `face_landmark`, `face_emotion`, `pose`, `rppg`, `lsl`, `marker`,
-`file_replay`, `arduino` and `remote`.
+`file_replay`, `arduino` and `remote`. `receiverSchema(type)` lists the options
+each one takes, with the type, default and range of each, in the same form as
+an analyzer's `parameterSchema()`. It leaves out what only the app can give: a
+`videoElement`, EMOTIV's client credentials, a live `transport`.
+
+A graph can also name its receivers itself, in `graph.receivers`, and the
+pipeline builds them; see [Pipelines](pipelines.md#receivers-in-the-graph).
 
 ## Event markers
 

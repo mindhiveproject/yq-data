@@ -7,6 +7,7 @@ import {
 import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { getChannelCount, deinterleave, interleave } from "../../../utility";
 import { minMaxNormalize, zScore, remap } from "../../methods/stats";
+import { ParameterSchema } from "../../parameters";
 
 export type NormalizationMode =
   /** Rescale each packet to [0, 1] using that packet's own extremes. */
@@ -53,16 +54,17 @@ export class Normalization extends BaseAnalyzer {
   private runningMin: number[] = [];
   private runningMax: number[] = [];
 
+  static readonly schema: ParameterSchema = {
+    mode: { type: "enum", options: ["minmax", "zscore", "running", "fixed"], default: "running" },
+    outMin: { type: "number", default: 0 },
+    outMax: { type: "number", default: 1 },
+    min: { type: "number", default: 0, description: "Input range, for fixed mode." },
+    max: { type: "number", default: 1, description: "Input range, for fixed mode." },
+    decay: { type: "number", min: 0, max: 1, default: 0.999 },
+  };
+
   constructor(parameters: NormalizationParameters = {}) {
-    super({
-      mode: "running",
-      outMin: 0,
-      outMax: 1,
-      min: 0,
-      max: 1,
-      decay: 0.999,
-      ...parameters,
-    });
+    super(parameters);
   }
 
   readonly accepts: Accepts = {};

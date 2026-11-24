@@ -86,6 +86,83 @@ pipeline.describe();  // one entry per output stream, before any data flows
 terminal or not, but not a `transmit` sink; naming one that does not exist is
 rejected at construction, like an edge would be.
 
+## Receivers in the graph
+
+A graph can say which device each source key stands for, in
+`graph.receivers`, and the pipeline builds those receivers itself with
+`createReceiver()`. The graph then describes its sources completely, so
+`describe()` reports every output with nothing connected, and an app needs
+no separate list of what a block produces:
+
+```ts
+const pipeline = new Pipeline(
+  {
+    nodes: [{ id: "face", receiver: "camera" }],
+    edges: [],
+    receivers: { camera: { device: "face_landmark", options: { numFaces: 2 } } },
+  },
+  // What JSON cannot hold, by receiver key, laid over the stored options.
+  { receiverOptions: { camera: { videoElement } } }
+);
+
+pipeline.describe();                     // the face streams, before any camera is on
+await pipeline.getReceiver("camera").connect(); // from a click
+```
+
+The pipeline builds the receivers but does not connect them, because most
+devices can only be opened from a user gesture. `attachReceiver(key, …)`
+still works, and replaces a receiver built from the graph. A built receiver
+is disconnected on `destroy()`.
+
+## Parameters
+
+A graph can expose some of its nodes' parameters, so each study or visual
+using it can choose its own value without a copy of the graph. A node reads
+one with `{ "$parameter": "<name>" }` in place of a value:
+
+```ts
+const graph = {
+  nodes: [
+    { id: "eeg",    receiver: "muse", stream: Modality.EEG },
+    { id: "window", method: AnalysisMethod.WINDOWING, parameters: { size: { $parameter: "window" } } },
+    { id: "bands",  method: AnalysisMethod.BAND_POWER },
+  ],
+  edges: [
+    { from: ["eeg"],    to: ["window"] },
+    { from: ["window"], to: ["bands"]  },
+  ],
+  parameters: { window: { label: "Window length", default: 4, min: 1, max: 10 } },
+};
+
+graphParameters(graph);
+// { window: { type: "number", unit: …, label: "Window length", default: 4, min: 1, max: 10 } }
+
+const pipeline = new Pipeline(graph, { parameters: { window: 2 } });
+pipeline.setParameter("window", 6);
+```
+
+A receiver's options can read parameters the same way, so connection
+settings and processing settings are one list:
+`receivers: { camera: { device: "face_landmark", options: { numFaces: { $parameter: "faces" } } } }`.
+
+An entry in `graph.parameters` needs only what differs from the method's or
+receiver's schema: type, default and range come from what reads it, and a
+`min` or `max` given here narrows the range for this graph. `graphParameters()`
+works them out with no pipeline running, which is what a settings panel needs.
+A value is checked against the graph's entry and against every node that reads
+it; one out of range throws. Values for names the graph does not declare are
+ignored, so values saved against an older version of a graph still load.
+
+`setParameter()` rebuilds each node that reads the parameter and restarts it
+and everything downstream from empty, as a disconnect does. A receiver built
+from `graph.receivers` is rebuilt too, which means reopening the device: a
+connected one is disconnected, and the new one connected and started, with
+any failure sent to `onError`. A device that has to ask for a port (an
+Arduino link) can only do that from a click, so connect it from one. `undefined` puts
+the default back, and `pipeline.parameters` holds the current values.
+`describe()` follows the change at once, so re-read it when a parameter
+changes what a node outputs, such as its bands or channels.
+
 ## Compatibility
 
 Every analyzer declares what it will accept as data, not as a predicate:

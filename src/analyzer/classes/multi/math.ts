@@ -12,6 +12,8 @@ import {
   SyncParameters,
 } from "../../base_analyzer";
 import { getChannelCount, getStreamChannelCount } from "../../../utility";
+import { ParameterSchema } from "../../parameters";
+import { SYNC_SCHEMA } from "../../base_analyzer";
 
 export type MathOperation = "add" | "subtract" | "multiply" | "divide" | "power";
 
@@ -60,8 +62,16 @@ export class MathNode extends MultiInputAnalyzer {
 
   readonly accepts: Record<string, Accepts> = { a: {}, b: {} };
 
+  static readonly schema: ParameterSchema = {
+    operation: { type: "enum", options: Object.keys(OPERATIONS), default: "add" },
+    absolute: { type: "boolean", default: false },
+    scale: { type: "number", default: 1 },
+    offset: { type: "number", default: 0 },
+    ...SYNC_SCHEMA,
+  };
+
   constructor(parameters: MathParameters = {}) {
-    super({ operation: "add", absolute: false, scale: 1, offset: 0, ...parameters });
+    super(parameters);
     if (!(this.parameters.operation in OPERATIONS)) {
       throw new Error(
         `Unknown math operation "${this.parameters.operation}". ` +

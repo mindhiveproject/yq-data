@@ -18,6 +18,8 @@ import {
   deinterleave,
   interleave,
 } from "../../../utility";
+import { ParameterSchema } from "../../parameters";
+import { SYNC_SCHEMA } from "../../base_analyzer";
 
 /** Upper bound on ports, so the letter naming stays unambiguous. */
 const MAX_INPUTS = 26;
@@ -74,8 +76,14 @@ export class Merge extends MultiInputAnalyzer {
   readonly ports: string[];
   readonly accepts: Record<string, Accepts>;
 
+  static readonly schema: ParameterSchema = {
+    inputs: { type: "integer", min: 2, max: MAX_INPUTS, default: 2 },
+    prefixLabels: { type: "enum", options: [true, false, "auto"], default: "auto" },
+    ...SYNC_SCHEMA,
+  };
+
   constructor(parameters: MergeParameters = {}) {
-    super({ inputs: 2, prefixLabels: "auto", ...parameters });
+    super(parameters);
 
     const requested = Math.floor(Number(this.parameters.inputs) || 2);
     const count = Math.min(MAX_INPUTS, Math.max(2, requested));

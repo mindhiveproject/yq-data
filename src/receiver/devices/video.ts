@@ -46,7 +46,7 @@ export class VideoReceiver extends BaseReceiver {
       typeof options === "number" ? { frameRate: options } : options;
 
     this.videoElement = videoElement;
-    this.deviceID = videoElement.id || "camera";
+    this.deviceID = videoElement?.id || "camera";
   }
 
   /**

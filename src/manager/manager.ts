@@ -21,7 +21,14 @@ import {
   isMultiInput,
   isRouter,
 } from "../analyzer/base_analyzer";
-import { createAnalyzer } from "../analyzer/registry";
+import { createAnalyzer, parameterSchema } from "../analyzer/registry";
+import { createReceiver, receiverSchema } from "../receiver/registry";
+import {
+  GraphParameter,
+  ParameterSpec,
+  checkParameter,
+  isParameterReference,
+} from "../analyzer/parameters";
 import { acceptsFor, checkAccepts } from "../analyzer/compatibility";
 import { matchesStreamFilter, streamFilterFor } from "../utility";
 import { StreamPoint, streamPoints } from "../points";
@@ -92,7 +99,10 @@ export interface PipelineNode {
   id: string;
   /** Analysis method for analyzer nodes; resolved through the registry. */
   method?: AnalysisMethod | string;
-  /** Constructor parameters for the analyzer. */
+  /**
+   * Constructor parameters for the analyzer. A value may instead be
+   * `{ "$parameter": "<name>" }`, which reads it from `graph.parameters`.
+   */
   parameters?: Record<string, any>;
   /** Key of the receiver feeding this node, for source nodes. */
   receiver?: string;
@@ -121,6 +131,26 @@ export interface PipelineNode {
   expects?: StreamMetadata[];
   /** Human-readable label, carried through to `describe()`. */
   label?: string;
+}
+
+/**
+ * A receiver the pipeline builds itself, from plain JSON: the device a source
+ * node's `receiver` key stands for.
+ *
+ * With these in the graph, the graph says everything about its sources, so
+ * `describe()` can report its outputs with nothing connected. What JSON
+ * cannot hold — a `<video>` element, credentials — comes from
+ * {@link PipelineOptions.receiverOptions}.
+ */
+export interface PipelineReceiver {
+  /** A registered receiver type, as `createReceiver()` takes it: `"muse"`, `"face_landmark"`, `"lsl"`. */
+  device: string;
+  /** Its options. A value may be `{ "$parameter": "<name>" }`. */
+  options?: Record<string, any>;
+  /** Human-readable name, for an app's connect screen. */
+  label?: string;
+  /** Whether the graph needs this receiver connected to produce its outputs, for the same. */
+  required?: boolean;
 }
 
 /** Connects one node's output to a port on another node's input. */
@@ -156,6 +186,20 @@ export interface PipelineGraph {
    * and {@link Pipeline.describe} follow it.
    */
   outputs?: PipelineGraphOutput[];
+  /**
+   * Values a study or a visual may set for itself, by name. A node reads one
+   * with `{ "$parameter": "<name>" }` in place of a value in its
+   * `parameters`; type, default and range come from that node's method,
+   * narrowed by whatever the entry here gives. See {@link graphParameters}.
+   */
+  parameters?: Record<string, GraphParameter>;
+  /**
+   * Receivers the pipeline builds, by the key source nodes name in
+   * `receiver`. A key left out here is attached by hand with
+   * `attachReceiver()`, as before; attaching one by hand also replaces one
+   * built from here.
+   */
+  receivers?: Record<string, PipelineReceiver>;
 }
 
 export interface PipelineOptions {
@@ -168,8 +212,104 @@ export interface PipelineOptions {
    * running undisturbed.
    */
   resetOnDisconnect?: boolean;
-  /** Called when a node throws, instead of letting it tear down the stream. */
-  onError?: (error: unknown, nodeId: string) => void;
+  /**
+   * Called when a node throws, instead of letting it tear down the stream,
+   * and when a receiver rebuilt by `setParameter()` fails to reopen. `id` is
+   * the node's id, or the receiver's key.
+   */
+  onError?: (error: unknown, id: string) => void;
+  /**
+   * Values for `graph.parameters`, by name: what one study or visual chose.
+   * A parameter left out takes its default. Names the graph does not declare
+   * are ignored, so values saved against an older version of a graph still
+   * load; a value out of range throws.
+   */
+  parameters?: Record<string, unknown>;
+  /**
+   * What only the app can give a receiver in `graph.receivers`, by key: a
+   * `videoElement`, EMOTIV's client credentials. Laid over the stored options.
+   */
+  receiverOptions?: Record<string, Record<string, any>>;
+}
+
+/**
+ * Where a graph parameter is read: one key of one node's `parameters`, or of
+ * one receiver's `options`.
+ */
+interface ParameterSite {
+  nodeId?: string;
+  receiver?: string;
+  key: string;
+  /** That key's entry in the method's or receiver's schema, when it has one. */
+  spec?: ParameterSpec;
+}
+
+/**
+ * Every read of each of `graph.parameters`, by name.
+ *
+ * @throws when a node reads a parameter the graph does not declare.
+ */
+function parameterSitesOf(graph: PipelineGraph): Map<string, ParameterSite[]> {
+  const sites = new Map<string, ParameterSite[]>(
+    Object.keys(graph.parameters ?? {}).map((name) => [name, []])
+  );
+  const collect = (
+    where: string,
+    values: Record<string, any> | undefined,
+    site: (key: string) => ParameterSite
+  ) => {
+    for (const [key, value] of Object.entries(values ?? {})) {
+      if (!isParameterReference(value)) continue;
+      const list = sites.get(value.$parameter);
+      if (!list) {
+        throw new Error(
+          `${where} reads \`${key}\` from parameter "${value.$parameter}", ` +
+            `which graph.parameters does not declare.`
+        );
+      }
+      list.push(site(key));
+    }
+  };
+
+  for (const node of graph.nodes) {
+    const schema = node.method ? parameterSchema(node.method) : undefined;
+    collect(`Node "${node.id}"`, node.parameters, (key) => ({
+      nodeId: node.id,
+      key,
+      spec: schema?.[key],
+    }));
+  }
+  for (const [name, receiver] of Object.entries(graph.receivers ?? {})) {
+    const schema = receiverSchema(receiver.device);
+    collect(`Receiver "${name}"`, receiver.options, (key) => ({
+      receiver: name,
+      key,
+      spec: schema?.[key],
+    }));
+  }
+  return sites;
+}
+
+function specsFrom(
+  graph: PipelineGraph,
+  sites: Map<string, ParameterSite[]>
+): Record<string, ParameterSpec> {
+  const specs: Record<string, ParameterSpec> = {};
+  for (const [name, reads] of sites) {
+    specs[name] = { type: "json", ...reads[0]?.spec, ...graph.parameters![name] };
+  }
+  return specs;
+}
+
+/**
+ * The parameters a graph exposes, each with its type, default and range: the
+ * schema entry of the first node or receiver that reads it, overlaid with the graph's own
+ * entry. Enough to draw a settings panel with no pipeline running.
+ *
+ * @throws when a node reads a parameter the graph does not declare.
+ */
+export function graphParameters(graph: PipelineGraph): Record<string, ParameterSpec> {
+  return specsFrom(graph, parameterSitesOf(graph));
 }
 
 /**
@@ -375,8 +515,15 @@ export class Pipeline {
   private readonly transports = new Map<string, Transport>();
   /** Keys whose receiver the pipeline created from a transport and must tear down. */
   private readonly ownedReceivers = new Set<string>();
+  /** Keys whose receiver the pipeline built from `graph.receivers`. */
+  private readonly builtReceivers = new Set<string>();
   private readonly incoming = new Map<string, PipelineEdge[]>();
   private readonly outgoing = new Map<string, PipelineEdge[]>();
+
+  /** Each graph parameter's reads, its effective spec, and its current value. */
+  private readonly parameterSites: Map<string, ParameterSite[]>;
+  private readonly parameterSpecs: Record<string, ParameterSpec>;
+  private readonly parameterValues = new Map<string, unknown>();
 
   private running = false;
   /** Whether a wave is being evaluated; a packet that arrives meanwhile waits its turn. */
@@ -387,6 +534,15 @@ export class Pipeline {
     this.graph = graph;
     this.options = { resetOnDisconnect: true, ...options };
 
+    this.parameterSites = parameterSitesOf(graph);
+    this.parameterSpecs = specsFrom(graph, this.parameterSites);
+    for (const [name, spec] of Object.entries(this.parameterSpecs)) {
+      const value = options.parameters?.[name] ?? spec.default;
+      if (value === undefined) continue;
+      this.assertParameter(name, value);
+      this.parameterValues.set(name, value);
+    }
+
     this.indexEdges();
     this.assertAcyclic();
     this.buildNodes();
@@ -394,6 +550,20 @@ export class Pipeline {
     this.assignRanks();
     this.assertSinksAreTerminal();
     this.assertOutputsResolve();
+
+    for (const key of Object.keys(graph.receivers ?? {})) {
+      this.bindReceiver(key, this.buildReceiver(key));
+      this.builtReceivers.add(key);
+    }
+  }
+
+  /** A receiver from `graph.receivers`, with its parameters read and the app's options laid over. */
+  private buildReceiver(key: string): BaseReceiver<any> {
+    const { device, options } = this.graph.receivers![key];
+    return createReceiver(device, {
+      ...this.resolveReferences(options),
+      ...this.options.receiverOptions?.[key],
+    });
   }
 
   /* ---------------------------------------------------------------------- */
@@ -475,7 +645,7 @@ export class Pipeline {
         analyzer:
           isSource || isSink
             ? undefined
-            : createAnalyzer(definition.method!, definition.parameters ?? {}),
+            : createAnalyzer(definition.method!, this.resolveReferences(definition.parameters)),
         output$: new Subject<DataPacket>(),
         pending: new Map(),
         inbox: [],
@@ -917,9 +1087,26 @@ export class Pipeline {
    * connects their headset long after the graph was built.
    */
   public attachReceiver(key: string, receiver: BaseReceiver<any>): void {
+    if (this.builtReceivers.delete(key)) {
+      const built = this.receivers.get(key);
+      if (built?.isConnected) void built.disconnect();
+    }
+    this.bindReceiver(key, receiver);
+  }
+
+  private bindReceiver(key: string, receiver: BaseReceiver<any>): void {
     this.detachReceiver(key);
     this.receivers.set(key, receiver);
     if (this.running) this.wireSourcesFor(key);
+  }
+
+  /**
+   * The receiver bound to a key, whether built from `graph.receivers` or
+   * attached by hand. An app connects a built one from a click:
+   * `await pipeline.getReceiver("muse").connect()`.
+   */
+  public getReceiver(key: string): BaseReceiver<any> | undefined {
+    return this.receivers.get(key);
   }
 
   /** Unbinds a receiver and drops the subscriptions of its source nodes. */
@@ -1146,15 +1333,21 @@ export class Pipeline {
    * pairing resumes as soon as the dropped side returns rather than after the
    * survivor's next emission, which for a windowing node can be seconds away.
    */
-  private resetDownstreamOf(key: string): void {
-    const affected = new Set<string>();
-    const queue: string[] = [];
+  private resetDownstreamOf(key: string): Set<string> {
+    return this.resetFrom(
+      Array.from(this.nodes.values())
+        .filter((runtime) => sourceKeyOf(runtime.definition) === key)
+        .map((runtime) => runtime.definition.id)
+    );
+  }
 
-    for (const runtime of this.nodes.values()) {
-      if (sourceKeyOf(runtime.definition) !== key) continue;
-      affected.add(runtime.definition.id);
-      queue.push(runtime.definition.id);
-    }
+  /**
+   * Resets the nodes `start` names and everything downstream of them, as
+   * {@link resetDownstreamOf} describes. Returns the ids it touched.
+   */
+  private resetFrom(start: string[]): Set<string> {
+    const affected = new Set<string>(start);
+    const queue = [...start];
 
     while (queue.length > 0) {
       for (const edge of this.outgoing.get(queue.pop()!) ?? []) {
@@ -1184,6 +1377,139 @@ export class Pipeline {
         }
       }
     }
+    return affected;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Parameters                                                              */
+  /* ---------------------------------------------------------------------- */
+
+  /** Current value of each of `graph.parameters` that has one, by name. */
+  public get parameters(): Record<string, unknown> {
+    return Object.fromEntries(this.parameterValues);
+  }
+
+  /**
+   * Changes one of `graph.parameters` while the pipeline runs. `undefined`
+   * puts it back to its default.
+   *
+   * Every node that reads the parameter is rebuilt with the new value, and
+   * it and everything downstream of it start again from empty, as after a
+   * disconnect: a window that has changed length has to refill, and a filter
+   * with a new cutoff has to be designed again.
+   *
+   * A receiver from `graph.receivers` that reads it is rebuilt too, which
+   * for a device means reopening it: a connected one is disconnected and the
+   * new one connected and started, with any failure sent to `onError`. One
+   * that must ask for a port or a device (an Arduino link) can only do that
+   * from a click, so call its `connect()` from one instead. A receiver
+   * attached by hand is the app's, and is left alone.
+   *
+   * `describe()` and `issues()` follow the new value straight away, so
+   * re-read them if the parameter changes what comes out (bands, channels,
+   * the number of faces).
+   *
+   * @throws when the graph declares no such parameter, or the value does not
+   *   fit its type or range. Nothing changes then.
+   */
+  public setParameter(name: string, value: unknown): void {
+    const sites = this.parameterSites.get(name);
+    if (!sites) {
+      const declared = Array.from(this.parameterSites.keys());
+      throw new Error(
+        `This graph has no parameter "${name}". ` +
+          (declared.length ? `Its parameters: ${declared.join(", ")}.` : "It declares none.")
+      );
+    }
+
+    const next = value === undefined ? this.parameterSpecs[name].default : value;
+    if (next !== undefined) this.assertParameter(name, next);
+
+    const previous = this.parameterValues.get(name);
+    const assign = (v: unknown) =>
+      v === undefined ? this.parameterValues.delete(name) : this.parameterValues.set(name, v);
+    assign(next);
+
+    // Build every replacement before swapping any in, so a constructor that
+    // throws leaves the pipeline as it was.
+    const rebuilt = new Map<NodeRuntime, AnyAnalyzer>();
+    const rebuiltReceivers = new Map<string, BaseReceiver<any>>();
+    try {
+      for (const site of sites) {
+        const runtime = site.nodeId ? this.nodes.get(site.nodeId) : undefined;
+        if (runtime?.analyzer && !rebuilt.has(runtime)) {
+          rebuilt.set(
+            runtime,
+            createAnalyzer(
+              runtime.definition.method!,
+              this.resolveReferences(runtime.definition.parameters)
+            )
+          );
+        }
+        const key = site.receiver;
+        if (key && this.builtReceivers.has(key) && !rebuiltReceivers.has(key)) {
+          rebuiltReceivers.set(key, this.buildReceiver(key));
+        }
+      }
+    } catch (error) {
+      assign(previous);
+      throw error;
+    }
+
+    for (const [runtime, analyzer] of rebuilt) {
+      runtime.analyzer = analyzer;
+      runtime.pending.clear();
+      runtime.checked.clear();
+      runtime.blocked.clear();
+    }
+    const affected = this.resetFrom(Array.from(rebuilt.keys(), (r) => r.definition.id));
+
+    for (const [key, receiver] of rebuiltReceivers) {
+      const old = this.receivers.get(key)!;
+      const reopen = old.isConnected;
+      this.bindReceiver(key, receiver);
+      this.resetDownstreamOf(key).forEach((id) => affected.add(id));
+      if (reopen) {
+        Promise.resolve(old.disconnect())
+          .then(() => receiver.connect())
+          .then(() => receiver.startStream())
+          .catch((error) => this.reportReceiverError(key, error));
+      }
+    }
+
+    // What these nodes last emitted no longer describes what they will emit.
+    for (const id of affected) this.nodes.get(id)!.metadata = undefined;
+  }
+
+  private reportReceiverError(key: string, error: unknown): void {
+    if (this.options.onError) this.options.onError(error, key);
+    else console.error(`Pipeline receiver "${key}" failed to reopen:`, error);
+  }
+
+  /** `parameters` or `options` with each `$parameter` read replaced by its current value. */
+  private resolveReferences(values: Record<string, any> | undefined): Record<string, any> {
+    const resolved: Record<string, any> = {};
+    for (const [key, value] of Object.entries(values ?? {})) {
+      if (!isParameterReference(value)) resolved[key] = value;
+      else if (this.parameterValues.has(value.$parameter)) {
+        resolved[key] = this.parameterValues.get(value.$parameter);
+      }
+      // A parameter with no value leaves the key out, so the method's own
+      // default (which may depend on the input, like a window's hop) applies.
+    }
+    return resolved;
+  }
+
+  /** Checks a value against the graph's spec and against every node that reads it. */
+  private assertParameter(name: string, value: unknown): void {
+    const specs = [
+      this.parameterSpecs[name],
+      ...this.parameterSites.get(name)!.flatMap((site) => (site.spec ? [site.spec] : [])),
+    ];
+    for (const spec of specs) {
+      const reason = checkParameter(spec, value);
+      if (reason) throw new Error(`Parameter "${name}": ${reason}.`);
+    }
   }
 
   /** Tears the pipeline down permanently. */
@@ -1193,6 +1519,11 @@ export class Pipeline {
       const remote = this.receivers.get(key) as RemoteStreamReceiver | undefined;
       void remote?.disconnect();
     }
+    for (const key of this.builtReceivers) {
+      const built = this.receivers.get(key);
+      if (built?.isConnected) void built.disconnect();
+    }
+    this.builtReceivers.clear();
     for (const runtime of this.nodes.values()) {
       runtime.subscriptions.forEach((s) => s.unsubscribe());
       runtime.subscriptions = [];

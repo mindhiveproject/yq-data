@@ -29,3 +29,4 @@ export * from "./compatibility";
 export * from "./methods";
 export * from "./classes";
 export * from "./registry";
+export * from "./parameters";

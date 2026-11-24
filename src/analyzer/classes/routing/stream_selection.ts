@@ -7,6 +7,7 @@ import {
 } from "../../../data_stream.interface";
 import { Accepts, BaseAnalyzer, StreamRouter } from "../../base_analyzer";
 import { StreamFilter, matchesStreamFilter } from "../../../utility";
+import { ParameterSchema } from "../../parameters";
 
 export interface StreamSelectionParameters {
   /**
@@ -72,13 +73,14 @@ export class StreamSelection extends BaseAnalyzer implements StreamRouter {
    */
   readonly stage = ProcessingStage.RAW;
 
+  static readonly schema: ParameterSchema = {
+    streams: { type: "json", description: "Stream IDs, or fragments of them, to pass." },
+    modalities: { type: "json", description: "Modalities to pass." },
+    invert: { type: "boolean", default: false },
+  };
+
   constructor(parameters: StreamSelectionParameters = {}) {
-    super({
-      streams: undefined,
-      modalities: undefined,
-      invert: false,
-      ...parameters,
-    });
+    super(parameters);
   }
 
   /**

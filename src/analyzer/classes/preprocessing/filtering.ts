@@ -14,6 +14,7 @@ import {
 } from "../../methods/filter_design";
 import { filtfilt, sosfilt, sosfiltfilt } from "../../methods/filter";
 import { WindowSpec } from "../../methods/window";
+import { ParameterSchema } from "../../parameters";
 
 export interface FilteringParameters {
   /** `"butterworth"` (IIR, default) or `"fir"` (windowed-sinc, linear phase). */
@@ -71,15 +72,18 @@ export class Filtering extends BaseAnalyzer {
   private designedFor: { rate: number; channels: number } | null = null;
   private states: number[][][] = [];
 
+  static readonly schema: ParameterSchema = {
+    method: { type: "enum", options: ["butterworth", "fir"], default: "butterworth" },
+    kind: { type: "enum", options: ["lowpass", "highpass", "bandpass", "bandstop"], default: "bandpass" },
+    cutoff: { type: "numbers", min: 0, default: [1, 40], unit: "Hz", label: "Cutoff" },
+    order: { type: "integer", min: 1, max: 20, default: 4 },
+    numtaps: { type: "integer", min: 1, description: "FIR length. Defaults to one second of samples, made odd." },
+    window: { type: "json", description: 'FIR window: a name such as "hamming", or ["kaiser", beta].' },
+    zeroPhase: { type: "boolean", default: false },
+  };
+
   constructor(parameters: FilteringParameters = {}) {
-    super({
-      method: "butterworth",
-      kind: "bandpass",
-      cutoff: [1, 40],
-      order: 4,
-      zeroPhase: false,
-      ...parameters,
-    });
+    super(parameters);
   }
 
   readonly accepts: Accepts = { requiresSamplingRate: true };

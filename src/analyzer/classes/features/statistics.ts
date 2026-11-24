@@ -19,6 +19,7 @@ import {
   maximum,
   dbfs,
 } from "../../methods/stats";
+import { ParameterSchema } from "../../parameters";
 
 export type StatisticName =
   | "mean"
@@ -55,8 +56,16 @@ export class StatisticalFeatures extends BaseAnalyzer {
   readonly method = AnalysisMethod.STATISTICAL_FEATURES;
   readonly stage = ProcessingStage.FEATURES;
 
+  static readonly schema: ParameterSchema = {
+    features: {
+      type: "json",
+      default: ["mean", "std", "rms"],
+      description: "Any of mean, std, rms, min, max, range, peakToPeak.",
+    },
+  };
+
   constructor(parameters: StatisticalParameters = {}) {
-    super({ features: ["mean", "std", "rms"], ...parameters });
+    super(parameters);
   }
 
   readonly accepts: Accepts = {};
@@ -127,8 +136,13 @@ export class RMSAnalyzer extends BaseAnalyzer {
   readonly method = AnalysisMethod.RMS;
   readonly stage = ProcessingStage.FEATURES;
 
+  static readonly schema: ParameterSchema = {
+    decibels: { type: "boolean", default: false },
+    floor: { type: "number", default: -100, unit: "dBFS" },
+  };
+
   constructor(parameters: RMSParameters = {}) {
-    super({ decibels: false, floor: -100, ...parameters });
+    super(parameters);
   }
 
   readonly accepts: Accepts = {};

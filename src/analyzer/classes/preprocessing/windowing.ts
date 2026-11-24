@@ -6,6 +6,7 @@ import {
 } from "../../../data_stream.interface";
 import { Accepts, BaseAnalyzer, EmitOptions } from "../../base_analyzer";
 import { GapDetector } from "../../../utility";
+import { ParameterSchema } from "../../parameters";
 
 export interface WindowingParameters {
   /** Window length. Seconds unless `unit` says otherwise. */
@@ -75,16 +76,17 @@ export class Windowing extends BaseAnalyzer {
   private channelCount = 1;
   private gaps: GapDetector;
 
+  static readonly schema: ParameterSchema = {
+    size: { type: "number", min: 0, default: 2, label: "Window length", description: "Seconds, or samples when unit is samples." },
+    hop: { type: "number", min: 0, label: "Hop", description: "Step between windows. Defaults to the window length." },
+    unit: { type: "enum", options: ["seconds", "samples"], default: "seconds" },
+    emitPartial: { type: "boolean", default: false },
+    frames: { type: "enum", options: ["latest", "all"], default: "latest" },
+    maxGap: { type: "json", default: "auto", unit: "s", description: 'Seconds, or "auto".' },
+  };
+
   constructor(parameters: WindowingParameters = {}) {
-    super({
-      size: 2,
-      hop: undefined,
-      unit: "seconds",
-      emitPartial: false,
-      frames: "latest",
-      maxGap: "auto",
-      ...parameters,
-    });
+    super(parameters);
     this.gaps = new GapDetector(this.parameters.maxGap);
   }
 

@@ -14,6 +14,7 @@ import {
 } from "../../../utility";
 import { spectrum, bandAverage, bandSum, SpectrumScaling } from "../../methods/fft";
 import { WindowType } from "../../methods/window";
+import { ParameterSchema } from "../../parameters";
 
 /** Frequency band definitions, in Hz, as `[low, high]`. */
 export type BandDefinitions = Record<string, [number, number]>;
@@ -80,17 +81,18 @@ export class BandPower extends BaseAnalyzer {
   readonly method = AnalysisMethod.BAND_POWER;
   readonly stage = ProcessingStage.FEATURES;
 
+  static readonly schema: ParameterSchema = {
+    bands: { type: "json", default: DEFAULT_EEG_BANDS, description: "Band name to [low, high] in Hz." },
+    perChannel: { type: "boolean", default: false },
+    channelWeights: { type: "numbers" },
+    aggregate: { type: "enum", options: ["mean", "sum"], default: "sum" },
+    relative: { type: "boolean", default: false },
+    window: { type: "enum", options: ["hamming", "hann", "blackman", "rectangular"], default: "hamming" },
+    scaling: { type: "enum", options: ["magnitude", "psd"], default: "psd" },
+  };
+
   constructor(parameters: BandPowerParameters = {}) {
-    super({
-      bands: DEFAULT_EEG_BANDS,
-      perChannel: false,
-      channelWeights: undefined,
-      aggregate: "sum",
-      relative: false,
-      window: "hamming",
-      scaling: "psd",
-      ...parameters,
-    });
+    super(parameters);
   }
 
   readonly accepts: Accepts = { requiresSamplingRate: true };

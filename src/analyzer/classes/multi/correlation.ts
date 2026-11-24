@@ -17,6 +17,8 @@ import {
   deinterleave,
 } from "../../../utility";
 import { correlation } from "../../methods/stats";
+import { ParameterSchema } from "../../parameters";
+import { SYNC_SCHEMA } from "../../base_analyzer";
 
 export interface CorrelationParameters extends SyncParameters {
   /**
@@ -53,8 +55,14 @@ export class Correlation extends MultiInputAnalyzer {
   readonly stage = ProcessingStage.FEATURES;
   readonly ports = ["a", "b"];
 
+  static readonly schema: ParameterSchema = {
+    mode: { type: "enum", options: ["paired", "matrix", "mean"], default: "paired" },
+    absolute: { type: "boolean", default: false },
+    ...SYNC_SCHEMA,
+  };
+
   constructor(parameters: CorrelationParameters = {}) {
-    super({ mode: "paired", absolute: false, ...parameters });
+    super(parameters);
   }
 
   /**

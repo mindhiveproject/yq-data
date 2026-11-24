@@ -20,6 +20,7 @@ import {
   intervalVariability,
   rmssd,
 } from "../../methods/peaks";
+import { ParameterSchema } from "../../parameters";
 
 export interface HeartRateParameters {
   /**
@@ -90,18 +91,19 @@ export class HeartRate extends BaseAnalyzer {
 
   private smoothed: number | null = null;
 
+  static readonly schema: ParameterSchema = {
+    strategy: { type: "enum", options: ["peaks", "spectral"], default: "peaks" },
+    detector: { type: "enum", options: ["msptdfast", "adaptive-threshold"], default: "msptdfast" },
+    channel: { type: "integer", min: 0, default: 0 },
+    minRate: { type: "number", min: 0, default: 40, unit: "bpm" },
+    maxRate: { type: "number", min: 0, default: 200, unit: "bpm" },
+    detrendDegree: { type: "integer", min: 0, default: 6 },
+    includeVariability: { type: "boolean", default: false },
+    smoothing: { type: "number", min: 0, max: 1, default: 0.6 },
+  };
+
   constructor(parameters: HeartRateParameters = {}) {
-    super({
-      strategy: "peaks",
-      detector: "msptdfast",
-      channel: 0,
-      minRate: 40,
-      maxRate: 200,
-      detrendDegree: 6,
-      includeVariability: false,
-      smoothing: 0.6,
-      ...parameters,
-    });
+    super(parameters);
   }
 
   readonly accepts: Accepts = { requiresSamplingRate: true };

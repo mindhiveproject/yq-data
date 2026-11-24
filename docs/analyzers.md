@@ -17,8 +17,14 @@
 | `STREAM_SELECTION` | `StreamSelection` | Passes some streams off a shared wire, drops the rest |
 | `MERGE` | `Merge` | Joins several streams into one multi-channel stream |
 
-Register your own with `registerAnalyzer(method, factory)`; built-in and custom
-nodes execute through the same evaluator.
+Register your own with `registerAnalyzer(method, factory, schema?)`; built-in
+and custom nodes execute through the same evaluator.
+
+Each method declares the parameters it takes, with the type, default and range
+of each: `parameterSchema("windowing")` returns them, for a node editor to
+draw controls from. An analyzer class declares its schema as
+`static readonly schema`, and its defaults fill in whatever a node leaves out.
+A custom method registered without a schema takes its parameters unchecked.
 
 `HeartRate` detects beats with MSPTDfast v2 (Charlton et al., 2025), the
 efficient form of MSPTD. MSPTD and qppg were the two best of fifteen

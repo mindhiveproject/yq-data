@@ -1,5 +1,6 @@
 import { AnalysisMethod } from "../data_stream.interface";
 import { AnyAnalyzer } from "./base_analyzer";
+import { ParameterSchema } from "./parameters";
 
 import { Windowing } from "./classes/preprocessing/windowing";
 import { Filtering } from "./classes/preprocessing/filtering";
@@ -30,13 +31,28 @@ export type AnalyzerFactory = (parameters: Record<string, any>) => AnyAnalyzer;
  * execute through exactly the same evaluator.
  */
 const registry = new Map<string, AnalyzerFactory>();
+const schemas = new Map<string, ParameterSchema>();
 
-/** Registers (or replaces) the implementation of an analysis method. */
+/**
+ * Registers (or replaces) the implementation of an analysis method, with the
+ * schema of the parameters it takes. A method registered without one takes
+ * its parameters unchecked.
+ */
 export function registerAnalyzer(
   method: AnalysisMethod | string,
-  factory: AnalyzerFactory
+  factory: AnalyzerFactory,
+  schema?: ParameterSchema
 ): void {
   registry.set(method, factory);
+  if (schema) schemas.set(method, schema);
+  else schemas.delete(method);
+}
+
+/** The parameters a method takes — type, default and range of each — if it declares them. */
+export function parameterSchema(
+  method: AnalysisMethod | string
+): ParameterSchema | undefined {
+  return schemas.get(method);
 }
 
 /** Looks up a factory without constructing anything. */
@@ -73,27 +89,18 @@ export function createAnalyzer(
   return factory(parameters);
 }
 
-registerAnalyzer(AnalysisMethod.WINDOWING, (p) => new Windowing(p));
-registerAnalyzer(AnalysisMethod.FILTERING, (p) => new Filtering(p));
-registerAnalyzer(AnalysisMethod.NORMALIZATION, (p) => new Normalization(p));
-registerAnalyzer(
-  AnalysisMethod.CHANNEL_SELECTION,
-  (p) => new ChannelSelection(p)
-);
-registerAnalyzer(AnalysisMethod.FFT, (p) => new SpectrumAnalyzer(p));
-registerAnalyzer(AnalysisMethod.PSD, (p) => new SpectrumAnalyzer(p));
-registerAnalyzer(
-  AnalysisMethod.PULSE_EXTRACTION,
-  (p) => new PulseExtraction(p)
-);
-registerAnalyzer(AnalysisMethod.BAND_POWER, (p) => new BandPower(p));
-registerAnalyzer(
-  AnalysisMethod.STATISTICAL_FEATURES,
-  (p) => new StatisticalFeatures(p)
-);
-registerAnalyzer(AnalysisMethod.RMS, (p) => new RMSAnalyzer(p));
-registerAnalyzer(AnalysisMethod.HEART_RATE, (p) => new HeartRate(p));
-registerAnalyzer(AnalysisMethod.CONNECTIVITY, (p) => new Correlation(p));
-registerAnalyzer(AnalysisMethod.MATH, (p) => new MathNode(p));
-registerAnalyzer(AnalysisMethod.STREAM_SELECTION, (p) => new StreamSelection(p));
-registerAnalyzer(AnalysisMethod.MERGE, (p) => new Merge(p));
+registerAnalyzer(AnalysisMethod.WINDOWING, (p) => new Windowing(p), Windowing.schema);
+registerAnalyzer(AnalysisMethod.FILTERING, (p) => new Filtering(p), Filtering.schema);
+registerAnalyzer(AnalysisMethod.NORMALIZATION, (p) => new Normalization(p), Normalization.schema);
+registerAnalyzer(AnalysisMethod.CHANNEL_SELECTION, (p) => new ChannelSelection(p), ChannelSelection.schema);
+registerAnalyzer(AnalysisMethod.FFT, (p) => new SpectrumAnalyzer(p), SpectrumAnalyzer.schema);
+registerAnalyzer(AnalysisMethod.PSD, (p) => new SpectrumAnalyzer(p), SpectrumAnalyzer.schema);
+registerAnalyzer(AnalysisMethod.PULSE_EXTRACTION, (p) => new PulseExtraction(p), PulseExtraction.schema);
+registerAnalyzer(AnalysisMethod.BAND_POWER, (p) => new BandPower(p), BandPower.schema);
+registerAnalyzer(AnalysisMethod.STATISTICAL_FEATURES, (p) => new StatisticalFeatures(p), StatisticalFeatures.schema);
+registerAnalyzer(AnalysisMethod.RMS, (p) => new RMSAnalyzer(p), RMSAnalyzer.schema);
+registerAnalyzer(AnalysisMethod.HEART_RATE, (p) => new HeartRate(p), HeartRate.schema);
+registerAnalyzer(AnalysisMethod.CONNECTIVITY, (p) => new Correlation(p), Correlation.schema);
+registerAnalyzer(AnalysisMethod.MATH, (p) => new MathNode(p), MathNode.schema);
+registerAnalyzer(AnalysisMethod.STREAM_SELECTION, (p) => new StreamSelection(p), StreamSelection.schema);
+registerAnalyzer(AnalysisMethod.MERGE, (p) => new Merge(p), Merge.schema);

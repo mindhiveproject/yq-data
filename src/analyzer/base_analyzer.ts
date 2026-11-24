@@ -10,6 +10,7 @@ import {
   ValueType,
 } from "../data_stream.interface";
 import { stringToStreamID, streamIDToString } from "../utility";
+import { ParameterSchema, defaultsOf } from "./parameters";
 
 /**
  * What a node will accept on one of its inputs.
@@ -128,11 +129,22 @@ export abstract class AbstractAnalyzer {
   abstract readonly method: AnalysisMethod | string;
   abstract readonly stage: ProcessingStage;
 
-  /** Parameters for analysis, initialized via constructor */
+  /**
+   * The parameters this kind of node takes: type, default and range of each.
+   *
+   * A subclass declares it as `static readonly schema`; its defaults fill in
+   * whatever a node leaves out, and the registry hands it to editors and to
+   * `graph.parameters`. A custom node may omit it, and then takes its
+   * parameters unchecked.
+   */
+  static readonly schema?: ParameterSchema;
+
+  /** Parameters for analysis: the schema's defaults, overlaid with the node's own. */
   protected readonly parameters: Record<string, any>;
 
   constructor(parameters: Record<string, any> = {}) {
-    this.parameters = parameters;
+    const schema = (new.target as { schema?: ParameterSchema }).schema;
+    this.parameters = { ...defaultsOf(schema), ...parameters };
   }
 
   /**
@@ -433,6 +445,14 @@ export interface SyncParameters {
   historyDepth?: number;
 }
 
+/** Schema entries for {@link SyncParameters}, shared by every multi-input node. */
+export const SYNC_SCHEMA: ParameterSchema = {
+  syncPolicy: { type: "enum", options: ["latest", "timestamp", "nearest"], default: "latest" },
+  tolerance: { type: "number", min: 0, default: 100, unit: "ms" },
+  maxAge: { type: "json", default: "auto", description: 'A time in ms, or "auto".' },
+  historyDepth: { type: "integer", min: 1, default: 8 },
+};
+
 /**
  * A node that combines several named input streams — synchrony between two
  * headsets, connectivity across devices, or any comparison of two signals.
@@ -470,15 +490,14 @@ export abstract class MultiInputAnalyzer<
   public historyDepth: number = 8;
 
   /**
-   * Subclasses merge their own defaults into `parameters` and pass the result
-   * through, so a policy chosen in a stored JSON graph arrives here alongside
+   * A policy chosen in a stored JSON graph arrives in `parameters` alongside
    * the analyzer's own settings.
    */
   constructor(parameters: Record<string, any> = {}) {
     super(parameters);
 
     const { syncPolicy, tolerance, maxAge, historyDepth } =
-      parameters as SyncParameters;
+      this.parameters as SyncParameters;
 
     if (syncPolicy !== undefined) this.syncPolicy = syncPolicy;
     if (tolerance !== undefined) this.tolerance = tolerance;

@@ -12,6 +12,7 @@ import {
   deinterleave,
   interleave,
 } from "../../../utility";
+import { ParameterSchema } from "../../parameters";
 
 export interface ChannelSelectionParameters {
   /** Channel indices to keep, in output order. */
@@ -34,8 +35,14 @@ export class ChannelSelection extends BaseAnalyzer {
   readonly method = AnalysisMethod.CHANNEL_SELECTION;
   readonly stage = ProcessingStage.PREPROCESSED;
 
+  static readonly schema: ParameterSchema = {
+    indices: { type: "numbers", min: 0, default: [0] },
+    labels: { type: "json", description: "Channel labels to keep. Takes precedence over indices." },
+    average: { type: "boolean", default: false },
+  };
+
   constructor(parameters: ChannelSelectionParameters = {}) {
-    super({ indices: [0], labels: undefined, average: false, ...parameters });
+    super(parameters);
   }
 
   readonly accepts: Accepts = {};

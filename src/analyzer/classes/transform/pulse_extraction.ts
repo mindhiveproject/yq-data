@@ -17,6 +17,7 @@ import {
   pulseWindow,
   pulseWindowLength,
 } from "../../methods/rppg";
+import { ParameterSchema } from "../../parameters";
 
 export interface PulseExtractionParameters {
   /**
@@ -89,13 +90,15 @@ export class PulseExtraction extends BaseAnalyzer {
   private windowLength = 0;
   private gaps: GapDetector;
 
+  static readonly schema: ParameterSchema = {
+    algorithm: { type: "enum", options: ["pos", "green"], default: "pos" },
+    windowSeconds: { type: "number", min: 0, default: 1.6, unit: "s" },
+    channels: { type: "numbers", min: 0, description: "Indices of the red, green and blue channels." },
+    maxGap: { type: "json", default: "auto", unit: "s", description: 'Seconds, or "auto".' },
+  };
+
   constructor(parameters: PulseExtractionParameters = {}) {
-    super({
-      algorithm: "pos",
-      windowSeconds: 1.6,
-      maxGap: "auto",
-      ...parameters,
-    });
+    super(parameters);
     this.gaps = new GapDetector(this.parameters.maxGap);
   }
 
