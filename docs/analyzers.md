@@ -13,9 +13,16 @@
 | `RMS` | `RMSAnalyzer` | Amplitude, linear or dBFS |
 | `HEART_RATE` | `HeartRate` | BPM from a pulse waveform, plus HRV |
 | `CONNECTIVITY` | `Correlation` | Correlation between two streams |
-| `MATH` | `MathNode` | Arithmetic between two streams: add, subtract, multiply, divide, power; then optional absolute value, scale and offset |
+| `MATH` | `MathNode` | Arithmetic between two streams: add, subtract, multiply, divide, power, minimum, maximum; then optional absolute value, scale and offset |
+| `FUNCTION` | `FunctionNode` | One function on every value: abs, negate, sign, reciprocal, sqrt, power, exp, ln, log10, log2, floor, ceil, round, sin, cos, tan |
+| `LIMIT` | `Limit` | Clamps values between `min` and `max` |
+| `LAG` | `Lag` | Exponential smoothing, with its own time constant for rising and falling |
 | `STREAM_SELECTION` | `StreamSelection` | Passes some streams off a shared wire, drops the rest |
 | `MERGE` | `Merge` | Joins several streams into one multi-channel stream |
+
+The math nodes take TouchDesigner's names (Math, Function, Limit, Lag CHOPs).
+Frontal alpha asymmetry, ln(R) − ln(L), is a `math` node dividing right alpha
+by left, followed by a `function` node with `function: "ln"`.
 
 Register your own with `registerAnalyzer(method, factory, schema?)`; built-in
 and custom nodes execute through the same evaluator.

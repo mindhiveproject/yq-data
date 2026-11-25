@@ -15,7 +15,14 @@ import { getChannelCount, getStreamChannelCount } from "../../../utility";
 import { ParameterSchema } from "../../parameters";
 import { SYNC_SCHEMA } from "../../base_analyzer";
 
-export type MathOperation = "add" | "subtract" | "multiply" | "divide" | "power";
+export type MathOperation =
+  | "add"
+  | "subtract"
+  | "multiply"
+  | "divide"
+  | "power"
+  | "minimum"
+  | "maximum";
 
 export interface MathParameters extends SyncParameters {
   /** How port `a` and port `b` combine, value by value. Defaults to `add`. */
@@ -34,6 +41,8 @@ const OPERATIONS: Record<MathOperation, (x: number, y: number) => number> = {
   multiply: (x, y) => x * y,
   divide: (x, y) => x / y,
   power: (x, y) => x ** y,
+  minimum: Math.min,
+  maximum: Math.max,
 };
 
 /** Size of a pairing: a side with exactly one broadcasts against the other. */
@@ -85,8 +94,8 @@ export class MathNode extends MultiInputAnalyzer {
     const countA = getStreamChannelCount(a);
     const channels = paired(countA, getStreamChannelCount(b));
     const info = (countA === channels ? a : b).channelInfo;
-    // Adding or subtracting keeps the unit; anything else changes it.
-    const keepsUnit = ["add", "subtract"].includes(this.parameters.operation);
+    // Adding, subtracting or picking one side keeps the unit; anything else changes it.
+    const keepsUnit = ["add", "subtract", "minimum", "maximum"].includes(this.parameters.operation);
 
     const channelInfo: ChannelInfo[] = Array.from({ length: channels }, (_, c) => ({
       index: c,

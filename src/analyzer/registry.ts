@@ -15,7 +15,10 @@ import {
 } from "./classes/features/statistics";
 import { HeartRate } from "./classes/features/heart_rate";
 import { Correlation } from "./classes/multi/correlation";
-import { MathNode } from "./classes/multi/math";
+import { MathNode } from "./classes/math/math";
+import { FunctionNode } from "./classes/math/function";
+import { Limit } from "./classes/math/limit";
+import { Lag } from "./classes/math/lag";
 import { StreamSelection } from "./classes/routing/stream_selection";
 import { Merge } from "./classes/routing/merge";
 
@@ -102,5 +105,8 @@ registerAnalyzer(AnalysisMethod.RMS, (p) => new RMSAnalyzer(p), RMSAnalyzer.sche
 registerAnalyzer(AnalysisMethod.HEART_RATE, (p) => new HeartRate(p), HeartRate.schema);
 registerAnalyzer(AnalysisMethod.CONNECTIVITY, (p) => new Correlation(p), Correlation.schema);
 registerAnalyzer(AnalysisMethod.MATH, (p) => new MathNode(p), MathNode.schema);
+registerAnalyzer(AnalysisMethod.FUNCTION, (p) => new FunctionNode(p), FunctionNode.schema);
+registerAnalyzer(AnalysisMethod.LIMIT, (p) => new Limit(p), Limit.schema);
+registerAnalyzer(AnalysisMethod.LAG, (p) => new Lag(p), Lag.schema);
 registerAnalyzer(AnalysisMethod.STREAM_SELECTION, (p) => new StreamSelection(p), StreamSelection.schema);
 registerAnalyzer(AnalysisMethod.MERGE, (p) => new Merge(p), Merge.schema);

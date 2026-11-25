@@ -19,7 +19,11 @@ export * from "./features/statistics";
 export * from "./features/heart_rate";
 
 export * from "./multi/correlation";
-export * from "./multi/math";
+
+export * from "./math/math";
+export * from "./math/function";
+export * from "./math/limit";
+export * from "./math/lag";
 
 export * from "./routing/stream_selection";
 export * from "./routing/merge";
