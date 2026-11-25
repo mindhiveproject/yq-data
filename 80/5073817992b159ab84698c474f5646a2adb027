@@ -1,0 +1,35 @@
+docs/analyzers.md
+  s_9717b9656bc4e7::t_8894937bfdca00 16-19,23-26
+src/analyzer/classes/index.ts
+  s_9717b9656bc4e7::t_009af5bace7a68 22-26
+src/analyzer/classes/math/function.ts
+  s_9717b9656bc4e7::t_afcb6b1ffe519c 1-109
+src/analyzer/classes/math/lag.ts
+  s_9717b9656bc4e7::t_9860679e5a1194 1-86
+src/analyzer/classes/math/limit.ts
+  s_9717b9656bc4e7::t_ff22655b3334ab 1-57
+src/analyzer/classes/math/math.ts
+  s_9717b9656bc4e7::t_72b86ed459f688 18-25,44-45,97-98
+src/analyzer/registry.ts
+  s_9717b9656bc4e7::t_1058400f171b61 18-21,108-110
+src/data_stream.interface.ts
+  s_9717b9656bc4e7::t_9e72b029a70185 290,292-294
+tests/unit/math.test.ts
+  s_9717b9656bc4e7::t_4bab1ddbf70e57 2-3,5-14,16,24,40-41,76-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "805073817992b159ab84698c474f5646a2adb027",
+  "prompts": {},
+  "sessions": {
+    "s_9717b9656bc4e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44ec96d1-d96b-4e0e-96cb-6fc6f26b133b",
+        "model": "unknown"
+      },
+      "human_author": "esromerog <esromerog@gmail.com>"
+    }
+  }
+}
