@@ -287,10 +287,8 @@ export enum AnalysisMethod {
   // Segmentation
   WINDOWING = "windowing",
 
-  // Math — arithmetic between two streams, or on one stream's values
+  // Math — on one stream's values, or between two streams
   MATH = "math",
-  FUNCTION = "function",
-  LIMIT = "limit",
   LAG = "lag",
 
   // Routing — structure of the graph rather than of the signal

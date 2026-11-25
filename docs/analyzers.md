@@ -13,16 +13,17 @@
 | `RMS` | `RMSAnalyzer` | Amplitude, linear or dBFS |
 | `HEART_RATE` | `HeartRate` | BPM from a pulse waveform, plus HRV |
 | `CONNECTIVITY` | `Correlation` | Correlation between two streams |
-| `MATH` | `MathNode` | Arithmetic between two streams: add, subtract, multiply, divide, power, minimum, maximum; then optional absolute value, scale and offset |
-| `FUNCTION` | `FunctionNode` | One function on every value: abs, negate, sign, reciprocal, sqrt, power, exp, ln, log10, log2, floor, ceil, round, sin, cos, tan |
-| `LIMIT` | `Limit` | Clamps values between `min` and `max` |
+| `MATH` | `MathNode` | Value-by-value math: add, subtract, multiply, divide, power, minimum, maximum (between two streams, or against a constant `b`); sign, reciprocal, sqrt, exp, ln, log10, log2, floor, ceil, round, sin, cos, tan, clamp (on one stream); then optional absolute value, scale and offset |
 | `LAG` | `Lag` | Exponential smoothing, with its own time constant for rising and falling |
 | `STREAM_SELECTION` | `StreamSelection` | Passes some streams off a shared wire, drops the rest |
 | `MERGE` | `Merge` | Joins several streams into one multi-channel stream |
 
-The math nodes take TouchDesigner's names (Math, Function, Limit, Lag CHOPs).
-Frontal alpha asymmetry, ln(R) − ln(L), is a `math` node dividing right alpha
-by left, followed by a `function` node with `function: "ln"`.
+`math` is one node for all arithmetic, as Blender's Math node is. Its ports
+follow its operation: a two-value operation has ports `a` and `b`, unless a
+constant `b` is set (`{ operation: "multiply", b: 0.5 }`), and a one-value
+operation has only `a`. A constant `b` can be an exposed parameter, so a study
+setting can drive it. Frontal alpha asymmetry, ln(R) − ln(L), is a `math` node
+dividing right alpha by left, followed by one with `operation: "ln"`.
 
 Register your own with `registerAnalyzer(method, factory, schema?)`; built-in
 and custom nodes execute through the same evaluator.

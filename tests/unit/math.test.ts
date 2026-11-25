@@ -1,14 +1,13 @@
 /**
- * The math nodes: `math` between ports `a` and `b`, and `function`, `limit`
- * and `lag` on one stream's values.
+ * The math nodes: `math` (between two streams, against a constant, or on one
+ * stream's values) and `lag`.
  */
 import {
   createAnalyzer,
   DataPacket,
-  FunctionNode,
   Lag,
-  Limit,
   MathNode,
+  MathOperation,
   Modality,
   StreamMetadata,
 } from "../../src";
@@ -76,52 +75,54 @@ describe("math", () => {
 
 const values = (p: DataPacket | null) => Array.from(p!.data).map((v) => +v.toFixed(5));
 
-describe("function", () => {
+describe("math on one stream", () => {
+  const one = (parameters: object, input: number[]) =>
+    values(new MathNode(parameters).analyze({ a: packet(input, ["L", "R"]) }));
+
   it.each([
-    ["abs", {}, [-2, 0.5], [2, 0.5]],
     ["ln", {}, [Math.E, 1], [1, 0]],
     ["log10", {}, [100, 0.1], [2, -1]],
     ["sqrt", {}, [9, 0.25], [3, 0.5]],
-    ["power", { exponent: 3 }, [2, -1], [8, -1]],
     ["reciprocal", {}, [4, -2], [0.25, -0.5]],
     ["round", {}, [1.4, 1.6], [1, 2]],
-  ])("%s", (fn, extra, input, expected) => {
-    const out = new FunctionNode({ function: fn as any, ...extra }).analyze(packet(input, ["L", "R"]));
-    expect(values(out)).toEqual(expected);
+    ["clamp", { min: 0, max: 1 }, [-0.5, 1.5], [0, 1]],
+    ["clamp", { max: 1 }, [-5, 3], [-5, 1]],
+    ["multiply", { b: 0.5 }, [4, -2], [2, -1]],
+    ["power", { b: 3 }, [2, -1], [8, -1]],
+  ])("%s %j", (operation, extra, input, expected) => {
+    expect(one({ operation, ...extra }, input)).toEqual(expected);
   });
 
-  it("keeps the unit only where the function does", () => {
+  it("has a b port only for a two-value operation without a constant", () => {
+    expect(new MathNode({ operation: "add" }).ports).toEqual(["a", "b"]);
+    expect(new MathNode({ operation: "add", b: 1 }).ports).toEqual(["a"]);
+    expect(new MathNode({ operation: "ln" }).ports).toEqual(["a"]);
+  });
+
+  it("keeps the unit only where the operation does", () => {
     const input = packet([1, 2], ["Alpha", "Beta"], "µV²");
-    expect(new FunctionNode({ function: "abs" }).analyze(input)!.metadata.channelInfo![0]).toEqual(
-      { index: 0, label: "Alpha", unit: "µV²" }
-    );
-    expect(new FunctionNode({ function: "ln" }).analyze(input)!.metadata.channelInfo![0]).toEqual(
-      { index: 0, label: "Alpha" }
+    const unit = (operation: MathOperation) =>
+      new MathNode({ operation }).analyze({ a: input })!.metadata.channelInfo![0].unit;
+    expect(unit("clamp")).toBe("µV²");
+    expect(unit("ln")).toBeUndefined();
+  });
+
+  it("declares the same output before data as it emits", () => {
+    const input = packet([1, 2], ["Alpha", "Beta"], "µV²");
+    const node = new MathNode({ operation: "sqrt" });
+    expect(node.describeOutput({ a: input.metadata })).toEqual(
+      node.analyze({ a: input })!.metadata
     );
   });
 
   it("expresses frontal alpha asymmetry as ln(R / L)", () => {
     const ratio = run({ operation: "divide" }, packet([4], ["F4"]), packet([2], ["F3"]));
-    const out = createAnalyzer("function", { function: "ln" }).analyze(ratio as any);
+    const out = createAnalyzer("math", { operation: "ln" }).analyze({ a: ratio } as any);
     expect((out as DataPacket).data[0]).toBeCloseTo(Math.log(4) - Math.log(2));
   });
 
-  it("refuses a function it does not know", () => {
-    expect(() => new FunctionNode({ function: "cosh" as any })).toThrow(/Unknown function/);
-  });
-});
-
-describe("limit", () => {
-  it("clamps between min and max", () => {
-    expect(values(new Limit({ min: 0, max: 1 }).analyze(packet([-0.5, 1.5], ["a", "b"])))).toEqual([0, 1]);
-  });
-
-  it("leaves a side without a bound alone", () => {
-    expect(values(new Limit({ max: 1 }).analyze(packet([-5, 3], ["a", "b"])))).toEqual([-5, 1]);
-  });
-
-  it("refuses a min above its max", () => {
-    expect(() => new Limit({ min: 2, max: 1 })).toThrow(/above its max/);
+  it("refuses a clamp whose min is above its max", () => {
+    expect(() => new MathNode({ operation: "clamp", min: 2, max: 1 })).toThrow(/above its max/);
   });
 });
 

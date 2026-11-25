@@ -423,6 +423,28 @@ describe("describe() before any data flows", () => {
     ]);
   });
 
+  it("runs a one-port math node from an edge that names no port", () => {
+    const device = new StubReceiver();
+    const pipeline = new Pipeline({
+      nodes: [
+        { id: "eeg", receiver: "dev" },
+        { id: "half", method: "math", parameters: { operation: "multiply", b: 0.5 } },
+      ],
+      edges: [{ from: ["eeg"], to: ["half"] }],
+    });
+    pipeline.attachReceiver("dev", device);
+    expect(pipeline.issues()).toEqual([]);
+    const before = pipeline.describe()[0];
+
+    const out: DataPacket[] = [];
+    pipeline.getOutput("half").subscribe((p) => out.push(p));
+    pipeline.start();
+    device.send(1000, 2, 4, 6, 8);
+
+    expect(Array.from(out[0].data)).toEqual([1, 2, 3, 4]);
+    expect(out[0].metadata.channelInfo).toEqual(before.channels);
+  });
+
   it("lists every stream a bare source carries", () => {
     const pipeline = new Pipeline({ nodes: [{ id: "eeg", receiver: "dev" }], edges: [] });
     pipeline.attachReceiver("dev", new StubReceiver());

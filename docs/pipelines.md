@@ -345,6 +345,10 @@ edges: [
 ]
 ```
 
+An edge that names no port goes to the node's first port. `math` sets its
+ports from its operation: `a` and `b` for an operation on two streams, and only
+`a` for an operation on one stream, or when a constant `b` is set.
+
 Ports pair by `syncPolicy`: `"latest"` (default) emits on every packet using the
 last value seen on each other port; `"timestamp"` waits until every port has a
 packet within `tolerance` ms — appropriate only for sources that share a clock;
